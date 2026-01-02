@@ -335,9 +335,6 @@ void ProxySSL::setSocketTimeouts(SOCKET s, int timeoutMs) {
 }
 
 SOCKET ProxySSL::createServerSocket() {
-
-    const auto config = &Config::GetInstance();
-
     SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
     if (s == INVALID_SOCKET) {
         BOOST_LOG_TRIVIAL(error) << "Unable to create socket: " << WSAGetLastError();
@@ -356,7 +353,7 @@ SOCKET ProxySSL::createServerSocket() {
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(config->proxyListenPort);
+    addr.sin_port = htons(PROXY_PORT);
 
     if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         BOOST_LOG_TRIVIAL(error) << "Unable to bind: " << WSAGetLastError();
@@ -429,7 +426,7 @@ std::unique_ptr<ISocketIO> ProxySSL::initPlainForwarder() {
     BOOST_LOG_FUNCTION();
 
     const auto config = &Config::GetInstance();
-    int sockfd = createConnectedSocket(config->proxyHost, config->proxyDestinationPort);
+    int sockfd = createConnectedSocket(config->getHostname("login"), config->proxyDestinationPort);
 
     if (sockfd < 0) {
         return nullptr;
@@ -444,7 +441,7 @@ std::unique_ptr<ISocketIO> ProxySSL::initSSLForwarder() {
     const auto config = &Config::GetInstance();
 
     // Create connected TCP socket
-    int sockfd = createConnectedSocket(config->proxyHost, config->proxyDestinationPort);
+    int sockfd = createConnectedSocket(config->getHostname("login"), config->proxyDestinationPort);
     if (sockfd < 0) {
         return nullptr;
     }

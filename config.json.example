@@ -11,9 +11,7 @@
     },
     "proxy": {
         "enable": true,
-        "host": "127.0.0.1",
         "destinationPort": 18840,
-        "listenPort": 18840,
         "secure": false
     },
     "game": {

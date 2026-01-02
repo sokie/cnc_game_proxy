@@ -39,9 +39,7 @@ Config::Config()
 
 	// Section - Proxy
 	proxy_enable = pt.get("proxy.enable", true);
-	proxyHost = pt.get("proxy.host", "127.0.0.1");
 	proxyDestinationPort = pt.get("proxy.destinationPort", 18840);
-	proxyListenPort = pt.get("proxy.listenPort", 18840);
 	proxySSL = pt.get("proxy.secure", false);
 
 	// Game related settings

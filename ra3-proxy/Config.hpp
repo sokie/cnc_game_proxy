@@ -32,9 +32,7 @@ public:
 
 	/* Proxy */
 	bool proxy_enable;
-	std::string proxyHost;
 	USHORT proxyDestinationPort;
-	USHORT proxyListenPort;
 	bool proxySSL;
 
 	/* Gamekey */

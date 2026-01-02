@@ -94,24 +94,22 @@ Copy `config.json.example` to `config.json` and modify as needed.
     },
     "proxy": {
         "enable": true,
-        "host": "127.0.0.1",
         "destinationPort": 18800,
-        "listenPort": 18840,
         "secure": false
     },
     "game": {
         "gameKey": "YOUR_GAME_KEY"
     },
     "hostnames": {
-        "host": "127.0.0.1",
-        "login": "127.0.0.1",
-        "gpcm": "127.0.0.1",
-        "peerchat": "127.0.0.1",
-        "master": "127.0.0.1",
-        "natneg": "127.0.0.1",
-        "stats": "127.0.0.1",
-        "sake": "127.0.0.1",
-        "server": "127.0.0.1"
+        "host": "localhost",
+        "login": "localhost",
+        "gpcm": "localhost",
+        "peerchat": "localhost",
+        "master": "localhost",
+        "natneg": "localhost",
+        "stats": "localhost",
+        "sake": "localhost",
+        "server": "localhost"
     }
 }
 ```
@@ -126,14 +124,14 @@ Copy `config.json.example` to `config.json` and modify as needed.
 | debug | logLevelConsole | 2 | Console log level (0-5) |
 | debug | logLevelFile | 1 | File log level (0-5) |
 | patches | SSL | true | Enable SSL certificate patching |
-| proxy | enable | true | Enable the proxy server |
-| proxy | host | 127.0.0.1 | Proxy destination host |
-| proxy | destinationPort | 18840 | Proxy destination port |
-| proxy | listenPort | 18840 | Local proxy listen port |
-| proxy | secure | false | Use SSL for proxy connection |
+| proxy | enable | true | Enable the local SSL proxy (listens on port 18840) |
+| proxy | destinationPort | 18840 | Port to forward traffic to on `hostnames.login` |
+| proxy | secure | false | Use SSL for proxy forwarding connection |
 | game | gameKey | "" | GameSpy encryption key |
 
 Log levels: `0=trace, 1=debug, 2=info, 3=warning, 4=error, 5=fatal`
+
+When `proxy.enable` is true, the game's FESL connections are redirected to `localhost:18840` where the local proxy intercepts them and forwards to `hostnames.login` on `proxy.destinationPort`.
 
 ## Research & Debugging
 

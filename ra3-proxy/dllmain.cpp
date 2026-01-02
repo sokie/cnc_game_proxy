@@ -287,7 +287,7 @@ int WSAAPI detourSend(SOCKET s, const char* buf, int len, int flags) {
     u_short remotePort = get_remote_port(s);
 
     const auto& sendConfig = Config::GetInstance();
-    bool isProxyTraffic = (remotePort == sendConfig.proxyListenPort || get_local_port(s) == sendConfig.proxyListenPort);
+    bool isProxyTraffic = (remotePort == ProxySSL::PROXY_PORT || get_local_port(s) == ProxySSL::PROXY_PORT);
 
     // Handle peerchat traffic (only if decryption logging is enabled)
     if (sendConfig.logDecryption && isPeerchatPort(remotePort)) {
@@ -437,7 +437,7 @@ int WSAAPI detourRecv(SOCKET s, char* buf, int len, int flags) {
                     // No validate captured yet, log raw
                     BOOST_LOG_TRIVIAL(debug) << "[MASTER RECV] (encrypted, no validate) " << bytes_recv << " bytes";
                 }
-            } else if (remotePort != recvConfig.proxyListenPort) {
+            } else if (remotePort != ProxySSL::PROXY_PORT) {
                 // Skip logging for proxy traffic
                 BOOST_LOG_TRIVIAL(debug) << "detourRecv(): " << bytes_recv
                     << " bytes from port " << remotePort;
@@ -479,7 +479,9 @@ struct hostent* WSAAPI detourGetHostByName(const char* name) {
         host == "cnc3-ep1-pc.fesl.ea.com" ||
         host == "cncra3-pc.fesl.ea.com")
     {
-        host = config.getHostname("login");
+        // When proxy is enabled, redirect to localhost so the local proxy can intercept
+        // Otherwise, connect directly to the login server
+        host = config.proxy_enable ? "localhost" : config.getHostname("login");
     }
     else if (host == "gpcm.gamespy.com")
     {
