@@ -407,6 +407,10 @@ int WSAAPI detourRecv(SOCKET s, char* buf, int len, int flags) {
                     if (state.cryptRequested) {
                         std::string clientChallenge, serverChallenge;
                         if (parse705Response(data, clientChallenge, serverChallenge)) {
+                            // Strip IRC trailing parameter prefix if present
+                            if (!serverChallenge.empty() && serverChallenge[0] == ':') {
+                                serverChallenge = serverChallenge.substr(1);
+                            }
                             // Initialize ciphers with game key from config
                             // Client uses first challenge for sending (server's recv cipher)
                             // Client uses second challenge for receiving (server's send cipher)
