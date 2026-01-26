@@ -27,6 +27,7 @@ public:
 	}
 
 	BOOL Patch() const;
+	void DumpSSLCheckMemory() const;
 
 private:
 	DWORD size_;

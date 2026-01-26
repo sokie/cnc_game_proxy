@@ -18,6 +18,7 @@ public:
 	}
 
 	BOOL Patch() const;
+	void DumpAuthCheckMemory() const;
 
 private:
 	DWORD baseAddress_;
