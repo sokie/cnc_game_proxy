@@ -131,13 +131,10 @@ BOOL PatchSSL::Patch() const
 		return FALSE;
 	}
 
-	std::vector<std::byte*> patched_addresses = FindAllPatterns(ptr, size_, parsed_pattern);
+	std::byte* found_address = FindPattern(ptr, size_, parsed_pattern);
 	BOOST_LOG_TRIVIAL(debug) << "Search complete.";
-	if (!patched_addresses.empty()) {
-		BOOST_LOG_TRIVIAL(info) << "Executable is already patched! Found " << patched_addresses.size() << " patched location(s).";
-		for (const auto& addr : patched_addresses) {
-			BOOST_LOG_TRIVIAL(debug) << "  - Patched at: 0x" << std::hex << reinterpret_cast<DWORD>(addr);
-		}
+	if (found_address != nullptr) {
+		BOOST_LOG_TRIVIAL(info) << "Executable is already patched! Found at: 0x" << std::hex << reinterpret_cast<DWORD>(found_address);
 		return TRUE;
 	}
 	else {
@@ -158,34 +155,28 @@ BOOL PatchSSL::Patch() const
 			return FALSE;
 		}
 
-		std::vector<std::byte*> found_addresses = FindAllPatterns(ptr, size_, parsed_pattern);
-		if (!found_addresses.empty()) {
-			BOOST_LOG_TRIVIAL(info) << "Found " << found_addresses.size() << " SSL verification location(s) to patch.";
+		found_address = FindPattern(ptr, size_, parsed_pattern);
+		if (found_address != nullptr) {
+			BOOST_LOG_TRIVIAL(info) << "Found SSL verification location to patch.";
 
-			int patchedCount = 0;
-			for (std::byte* found_address : found_addresses) {
-				DWORD oldProtect;
-				// Change page protection to allow writing
-				if (!VirtualProtect(found_address, 15, PAGE_EXECUTE_READWRITE, &oldProtect)) {
-					BOOST_LOG_TRIVIAL(error) << "Failed to change memory protection at: 0x" << std::hex << reinterpret_cast<DWORD>(found_address);
-					continue;
-				}
-
-				//patch B8 15 00 00 00
-				*reinterpret_cast<BYTE*>(found_address + 6) = 0xB8;
-				*reinterpret_cast<BYTE*>(found_address + 7) = 0x15;
-				*reinterpret_cast<BYTE*>(found_address + 8) = 0x00;
-				*reinterpret_cast<BYTE*>(found_address + 9) = 0x00;
-				*reinterpret_cast<BYTE*>(found_address + 10) = 0x00;
-
-				VirtualProtect(found_address, 15, oldProtect, &oldProtect);
-
-				BOOST_LOG_TRIVIAL(info) << "Patched SSL verification at: 0x" << std::hex << reinterpret_cast<DWORD>(found_address);
-				patchedCount++;
+			DWORD oldProtect;
+			// Change page protection to allow writing
+			if (!VirtualProtect(found_address, 15, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+				BOOST_LOG_TRIVIAL(error) << "Failed to change memory protection at: 0x" << std::hex << reinterpret_cast<DWORD>(found_address);
+				return FALSE;
 			}
 
-			BOOST_LOG_TRIVIAL(info) << "Successfully patched " << std::dec << patchedCount << "/" << found_addresses.size() << " SSL verification location(s)!";
-			return patchedCount > 0 ? TRUE : FALSE;
+			//patch B8 15 00 00 00
+			*reinterpret_cast<BYTE*>(found_address + 6) = 0xB8;
+			*reinterpret_cast<BYTE*>(found_address + 7) = 0x15;
+			*reinterpret_cast<BYTE*>(found_address + 8) = 0x00;
+			*reinterpret_cast<BYTE*>(found_address + 9) = 0x00;
+			*reinterpret_cast<BYTE*>(found_address + 10) = 0x00;
+
+			VirtualProtect(found_address, 15, oldProtect, &oldProtect);
+
+			BOOST_LOG_TRIVIAL(info) << "Patched SSL verification at: 0x" << std::hex << reinterpret_cast<DWORD>(found_address);
+			return TRUE;
 		}
 		else {
 			BOOST_LOG_TRIVIAL(error) << "Failed to find SSL verification code. This will cause things to break!";

@@ -6,7 +6,7 @@
 
 // Forward declarations from PatchSSL.cpp
 extern std::vector<PatternByte> ParsePattern(const std::string& pattern_str);
-extern std::vector<std::byte*> FindAllPatterns(std::byte* start_address, size_t search_length, const std::vector<PatternByte>& pattern);
+extern std::byte* FindPattern(std::byte* start_address, size_t search_length, const std::vector<PatternByte>& pattern);
 
 PatchAuthKey::PatchAuthKey()
 {
@@ -48,13 +48,10 @@ BOOL PatchAuthKey::Patch() const
 		return FALSE;
 	}
 
-	std::vector<std::byte*> patched_addresses = FindAllPatterns(ptr, size_, parsed_pattern);
+	std::byte* found_address = FindPattern(ptr, size_, parsed_pattern);
 	BOOST_LOG_TRIVIAL(debug) << "Search complete.";
-	if (!patched_addresses.empty()) {
-		BOOST_LOG_TRIVIAL(info) << "Auth certificate check is already patched! Found " << patched_addresses.size() << " patched location(s).";
-		for (const auto& addr : patched_addresses) {
-			BOOST_LOG_TRIVIAL(debug) << "  - Patched at: 0x" << std::hex << reinterpret_cast<DWORD>(addr);
-		}
+	if (found_address != nullptr) {
+		BOOST_LOG_TRIVIAL(info) << "Auth certificate check is already patched! Found at: 0x" << std::hex << reinterpret_cast<DWORD>(found_address);
 		return TRUE;
 	}
 
@@ -72,13 +69,13 @@ BOOL PatchAuthKey::Patch() const
 		return FALSE;
 	}
 
-	std::vector<std::byte*> found_addresses = FindAllPatterns(ptr, size_, parsed_pattern);
-	if (found_addresses.empty()) {
+	found_address = FindPattern(ptr, size_, parsed_pattern);
+	if (found_address == nullptr) {
 		BOOST_LOG_TRIVIAL(error) << "Failed to find auth certificate check code. Pattern not found!";
 		return FALSE;
 	}
 
-	BOOST_LOG_TRIVIAL(info) << "Found " << found_addresses.size() << " auth certificate check location(s) to patch.";
+	BOOST_LOG_TRIVIAL(info) << "Found auth certificate check location to patch.";
 
 	// mov eax, 0x01 - makes the function return 1 (success)
 	// We replace "1B C0 83 C0 01" (5 bytes) with "B8 01 00 00 00" (5 bytes)
@@ -86,31 +83,19 @@ BOOL PatchAuthKey::Patch() const
 		0xB8, 0x01, 0x00, 0x00, 0x00  // mov eax, 0x01
 	};
 
-	int patchedCount = 0;
-	for (std::byte* found_address : found_addresses) {
-		// Patch point is at offset 2 from pattern start (after "F7 D8")
-		BYTE* patchAddress = reinterpret_cast<BYTE*>(found_address + 2);
+	// Patch point is at offset 2 from pattern start (after "F7 D8")
+	BYTE* patchAddress = reinterpret_cast<BYTE*>(found_address + 2);
 
-		DWORD oldProtect;
-		if (!VirtualProtect(patchAddress, sizeof(new_auth_certificate_check_return_value), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-			BOOST_LOG_TRIVIAL(error) << "Failed to change memory protection at: 0x" << std::hex << reinterpret_cast<DWORD>(patchAddress);
-			continue;
-		}
-
-		memcpy(patchAddress, new_auth_certificate_check_return_value, sizeof(new_auth_certificate_check_return_value));
-
-		VirtualProtect(patchAddress, sizeof(new_auth_certificate_check_return_value), oldProtect, &oldProtect);
-
-		BOOST_LOG_TRIVIAL(info) << "Patched auth certificate check at: 0x" << std::hex << reinterpret_cast<DWORD>(patchAddress);
-		patchedCount++;
-	}
-
-	if (patchedCount > 0) {
-		BOOST_LOG_TRIVIAL(info) << "Successfully patched " << std::dec << patchedCount << "/" << found_addresses.size() << " auth certificate check location(s)!";
-		return TRUE;
-	}
-	else {
-		BOOST_LOG_TRIVIAL(error) << "Failed to patch any auth certificate check locations.";
+	DWORD oldProtect;
+	if (!VirtualProtect(patchAddress, sizeof(new_auth_certificate_check_return_value), PAGE_EXECUTE_READWRITE, &oldProtect)) {
+		BOOST_LOG_TRIVIAL(error) << "Failed to change memory protection at: 0x" << std::hex << reinterpret_cast<DWORD>(patchAddress);
 		return FALSE;
 	}
+
+	memcpy(patchAddress, new_auth_certificate_check_return_value, sizeof(new_auth_certificate_check_return_value));
+
+	VirtualProtect(patchAddress, sizeof(new_auth_certificate_check_return_value), oldProtect, &oldProtect);
+
+	BOOST_LOG_TRIVIAL(info) << "Patched auth certificate check at: 0x" << std::hex << reinterpret_cast<DWORD>(patchAddress);
+	return TRUE;
 }
