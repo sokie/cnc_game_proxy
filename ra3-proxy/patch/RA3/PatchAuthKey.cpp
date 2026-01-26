@@ -45,7 +45,7 @@ static std::byte* SafeFindPattern(std::byte* start_address, size_t search_length
 		size_t bytes_in_region = region_end - current_pos;
 
 		// Search within this readable region
-		size_t search_end = std::min(i + bytes_in_region, search_length - pattern.size() + 1);
+		size_t search_end = (std::min)(i + bytes_in_region, search_length - pattern.size() + 1);
 
 		for (; i < search_end; ++i) {
 			bool match = true;
@@ -99,7 +99,7 @@ static std::vector<std::byte*> SafeFindAllPatterns(std::byte* start_address, siz
 		size_t region_end = reinterpret_cast<size_t>(mbi.BaseAddress) + mbi.RegionSize;
 		size_t current_pos = reinterpret_cast<size_t>(start_address + i);
 		size_t bytes_in_region = region_end - current_pos;
-		size_t search_end = std::min(i + bytes_in_region, search_length - pattern.size() + 1);
+		size_t search_end = (std::min)(i + bytes_in_region, search_length - pattern.size() + 1);
 
 		for (; i < search_end; ++i) {
 			bool match = true;
