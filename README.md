@@ -1,6 +1,6 @@
 # Cnc Online Proxy
 
-A Windows DLL library that enables **Red Alert 3, Tiberium Wars, and Kane's Wrath** to connect to custom multiplayer servers by proxying and redirecting game traffic.
+A Windows DLL library that enables **Red Alert 3, Tiberium Wars, and Kane's Wrath,Command & Conquer: Generals, Command & Conquer: Generals Zero Hour** to connect to custom multiplayer servers by proxying and redirecting game traffic.
 
 ## Features
 
@@ -23,7 +23,8 @@ A Windows DLL library that enables **Red Alert 3, Tiberium Wars, and Kane's Wrat
 2. Place `winmm.dll` and the other files in the appropriate folder:
   - For RA3 release files go to `Red Alert 3\Data\`
   - For KW release files go to `Command Conquer 3 Kanes Wrath\RetailExe\1.3\`
-  - For TW release files go to `Command Conquer 3 Tiberium Wars\RetailExe\1.10\` 
+  - For TW release files go to `Command Conquer 3 Tiberium Wars\RetailExe\1.10\`
+  - For Command & Conquer: Generals & ZH release files go in the main folder (eg. next to `Generals.exe` )
 4. Configure `config.json` and place in game folder
 
 If you currently use Tacitus from CncOnline, rename `dsound.dll` to `dsound.dll.bkp`
