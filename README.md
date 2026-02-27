@@ -20,8 +20,11 @@ A Windows DLL library that enables **Red Alert 3, Tiberium Wars, and Kane's Wrat
 ## Installation
 
 1. Build the DLL or download from releases
-2. Place `winmm.dll` and the other files in the game/Data/ directory
-3. Configure `config.json` and place in game folder
+2. Place `winmm.dll` and the other files in the appropriate folder:
+  - For RA3 release files go to `Red Alert 3\Data\`
+  - For KW release files go to `Command Conquer 3 Kanes Wrath\RetailExe\1.3\`
+  - For TW release files go to `Command Conquer 3 Tiberium Wars\RetailExe\1.10\` 
+4. Configure `config.json` and place in game folder
 
 If you currently use Tacitus from CncOnline, rename `dsound.dll` to `dsound.dll.bkp`
 
@@ -104,7 +107,7 @@ Then you need to add that to your config file as so `"login": "my_cool_pc",` and
 | patches | SSL | true | Enable SSL certificate patching |
 | proxy | enable | true | Enable the local SSL proxy (listens on port 18840) |
 | proxy | destinationPort | 18840 | Port to forward traffic to on `hostnames.login` |
-| proxy | listenPort | 18840 | Port that our proxy listens on. 18840 for RA3, 18760 for KW |
+| proxy | listenPort | 18840 | Port that our proxy listens on. `18840` for RA3, `18760` for KW, `18310` for TW |
 | proxy | secure | false | Use SSL for proxy forwarding connection |
 | game | gameKey | "" | GameSpy encryption key |
 
