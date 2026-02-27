@@ -51,49 +51,124 @@ std::vector<PatternByte> ParsePattern(const std::string& pattern_str) {
 	return parsed_pattern;
 }
 
-// Function to search for the pattern in a memory region
-std::byte* FindPattern(std::byte* start_address, size_t search_length, const std::vector<PatternByte>& pattern) {
-	if (pattern.empty() || search_length < pattern.size()) {
-		return nullptr; // Pattern is empty or longer than the search area
-	}
-
-	for (size_t i = 0; i <= search_length - pattern.size(); ++i) {
-		bool match = true;
-		for (size_t j = 0; j < pattern.size(); ++j) {
-			if (!pattern[j].is_wildcard) {
-				if (start_address[i + j] != pattern[j].value.value()) {
-					match = false;
-					break;
-				}
-			}
-		}
-		if (match) {
-			return &start_address[i];
-		}
-	}
-	return nullptr; // Pattern not found
+// Helper to check if a memory region is readable
+static bool IsRegionReadable(const MEMORY_BASIC_INFORMATION& mbi) {
+	if (mbi.State != MEM_COMMIT)
+		return false;
+	if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))
+		return false;
+	if (!(mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY | PAGE_WRITECOPY)))
+		return false;
+	return true;
 }
 
-// Function to search for all occurrences of the pattern in a memory region
+// Function to search for the pattern in a memory region, safely skipping unreadable pages
+std::byte* FindPattern(std::byte* start_address, size_t search_length, const std::vector<PatternByte>& pattern) {
+	if (pattern.empty() || search_length < pattern.size()) {
+		return nullptr;
+	}
+
+	size_t i = 0;
+	while (i <= search_length - pattern.size()) {
+		MEMORY_BASIC_INFORMATION mbi;
+		if (VirtualQuery(start_address + i, &mbi, sizeof(mbi)) == 0) {
+			i += 0x1000;
+			continue;
+		}
+
+		if (!IsRegionReadable(mbi)) {
+			size_t region_end = reinterpret_cast<size_t>(mbi.BaseAddress) + mbi.RegionSize;
+			size_t current_pos = reinterpret_cast<size_t>(start_address + i);
+			if (region_end > current_pos) {
+				i += (region_end - current_pos);
+			} else {
+				i += 0x1000;
+			}
+			continue;
+		}
+
+		size_t region_end = reinterpret_cast<size_t>(mbi.BaseAddress) + mbi.RegionSize;
+		size_t current_pos = reinterpret_cast<size_t>(start_address + i);
+		size_t bytes_in_region = region_end - current_pos;
+
+		// Ensure the entire pattern fits within the readable region
+		size_t safe_region_end = (bytes_in_region >= pattern.size()) ? (i + bytes_in_region - pattern.size() + 1) : i;
+		size_t search_end = (std::min)(safe_region_end, search_length - pattern.size() + 1);
+
+		for (; i < search_end; ++i) {
+			bool match = true;
+			for (size_t j = 0; j < pattern.size(); ++j) {
+				if (!pattern[j].is_wildcard) {
+					if (start_address[i + j] != pattern[j].value.value()) {
+						match = false;
+						break;
+					}
+				}
+			}
+			if (match) {
+				return &start_address[i];
+			}
+		}
+
+		// If we didn't advance (region too small for pattern), skip past it
+		if (i < safe_region_end || bytes_in_region < pattern.size()) {
+			i = (region_end - reinterpret_cast<size_t>(start_address));
+		}
+	}
+	return nullptr;
+}
+
+// Function to search for all occurrences of the pattern in a memory region, safely skipping unreadable pages
 std::vector<std::byte*> FindAllPatterns(std::byte* start_address, size_t search_length, const std::vector<PatternByte>& pattern) {
 	std::vector<std::byte*> results;
 
 	if (pattern.empty() || search_length < pattern.size()) {
-		return results; // Pattern is empty or longer than the search area
+		return results;
 	}
 
-	for (size_t i = 0; i <= search_length - pattern.size(); ++i) {
-		bool match = true;
-		for (size_t j = 0; j < pattern.size(); ++j) {
-			if (!pattern[j].is_wildcard) {
-				if (start_address[i + j] != pattern[j].value.value()) {
-					match = false;
-					break;
+	size_t i = 0;
+	while (i <= search_length - pattern.size()) {
+		MEMORY_BASIC_INFORMATION mbi;
+		if (VirtualQuery(start_address + i, &mbi, sizeof(mbi)) == 0) {
+			i += 0x1000;
+			continue;
+		}
+
+		if (!IsRegionReadable(mbi)) {
+			size_t region_end = reinterpret_cast<size_t>(mbi.BaseAddress) + mbi.RegionSize;
+			size_t current_pos = reinterpret_cast<size_t>(start_address + i);
+			if (region_end > current_pos) {
+				i += (region_end - current_pos);
+			} else {
+				i += 0x1000;
+			}
+			continue;
+		}
+
+		size_t region_end = reinterpret_cast<size_t>(mbi.BaseAddress) + mbi.RegionSize;
+		size_t current_pos = reinterpret_cast<size_t>(start_address + i);
+		size_t bytes_in_region = region_end - current_pos;
+
+		size_t safe_region_end = (bytes_in_region >= pattern.size()) ? (i + bytes_in_region - pattern.size() + 1) : i;
+		size_t search_end = (std::min)(safe_region_end, search_length - pattern.size() + 1);
+
+		for (; i < search_end; ++i) {
+			bool match = true;
+			for (size_t j = 0; j < pattern.size(); ++j) {
+				if (!pattern[j].is_wildcard) {
+					if (start_address[i + j] != pattern[j].value.value()) {
+						match = false;
+						break;
+					}
 				}
 			}
+			if (match) {
+				results.push_back(&start_address[i]);
+			}
 		}
-		if (match) {
-			results.push_back(&start_address[i]);
+
+		if (i < safe_region_end || bytes_in_region < pattern.size()) {
+			i = (region_end - reinterpret_cast<size_t>(start_address));
 		}
 	}
 	return results;
