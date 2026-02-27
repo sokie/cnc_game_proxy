@@ -33,6 +33,7 @@ public:
 
 	/* Proxy */
 	bool proxy_enable;
+	USHORT proxyListenPort;
 	USHORT proxyDestinationPort;
 	bool proxySSL;
 

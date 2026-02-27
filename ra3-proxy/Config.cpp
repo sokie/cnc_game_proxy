@@ -40,6 +40,7 @@ Config::Config()
 
 	// Section - Proxy
 	proxy_enable = pt.get("proxy.enable", true);
+	proxyListenPort = pt.get("proxy.listenPort", static_cast<USHORT>(18840));
 	proxyDestinationPort = pt.get("proxy.destinationPort", 18840);
 	proxySSL = pt.get("proxy.secure", false);
 

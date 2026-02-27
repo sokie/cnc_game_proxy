@@ -80,8 +80,13 @@ std::atomic<bool> useAltPeerChatPort(false);
 int WSAAPI detourConnect(SOCKET s, const sockaddr* name, int namelen) {
     sockaddr_in* addr_in = (sockaddr_in*)name;
 
-    BOOST_LOG_TRIVIAL(debug) << "Connect(): " << addr_in->sin_family << " port: " << addr_in->sin_port;
-
+    if (addr_in->sin_family == AF_INET) {
+        char destIp[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &addr_in->sin_addr, destIp, INET_ADDRSTRLEN);
+        BOOST_LOG_TRIVIAL(debug) << "Connect(): " << destIp << ":" << ntohs(addr_in->sin_port);
+    } else {
+        BOOST_LOG_TRIVIAL(debug) << "Connect(): family=" << addr_in->sin_family << " port: " << ntohs(addr_in->sin_port);
+    }
 
     if (addr_in->sin_family == AF_INET) { //IPv4
         int port = ntohs(addr_in->sin_port);
@@ -288,7 +293,8 @@ int WSAAPI detourSend(SOCKET s, const char* buf, int len, int flags) {
     u_short remotePort = get_remote_port(s);
 
     const auto& sendConfig = Config::GetInstance();
-    bool isProxyTraffic = (remotePort == ProxySSL::PROXY_PORT || get_local_port(s) == ProxySSL::PROXY_PORT);
+    USHORT proxyPort = ProxySSL::GetInstance().getProxyPort();
+    bool isProxyTraffic = (remotePort == proxyPort || get_local_port(s) == proxyPort);
 
     // Handle peerchat traffic (only if decryption logging is enabled)
     if (sendConfig.logDecryption && isPeerchatPort(remotePort)) {
@@ -442,7 +448,7 @@ int WSAAPI detourRecv(SOCKET s, char* buf, int len, int flags) {
                     // No validate captured yet, log raw
                     BOOST_LOG_TRIVIAL(debug) << "[MASTER RECV] (encrypted, no validate) " << bytes_recv << " bytes";
                 }
-            } else if (remotePort != ProxySSL::PROXY_PORT) {
+            } else if (remotePort != ProxySSL::GetInstance().getProxyPort()) {
                 // Skip logging for proxy traffic
                 BOOST_LOG_TRIVIAL(debug) << "detourRecv(): " << bytes_recv
                     << " bytes from port " << remotePort;
@@ -600,7 +606,7 @@ bool setDetoursForShell() {
     return true;
 }
 
-void InitLogging()
+void InitLogging(const std::string& logPrefix)
 {
     using namespace std;
     namespace logging = boost::log;
@@ -689,7 +695,7 @@ void InitLogging()
 
         boost::shared_ptr<sinks::text_file_backend> file_backend =
             boost::make_shared<sinks::text_file_backend>(
-                keywords::file_name = (boost::format("ra3_%1%.log") % is.str()).str(),
+                keywords::file_name = (boost::format("%1%_%2%.log") % logPrefix % is.str()).str(),
                 keywords::rotation_size = 10 * 1024 * 1024, // Rotate when file reaches 10 MB
                 keywords::time_based_rotation = sinks::file::rotation_at_time_point(0, 0, 0) // Rotate daily at midnight
             );
@@ -713,7 +719,22 @@ void InitProxy()
 
 DWORD WINAPI Main(LPVOID lpReserved) {
 
-    InitLogging();
+    // Detect executable name for log file prefix
+    std::string logPrefix = "proxy";
+    {
+        TCHAR buffer[MAX_PATH] = { 0 };
+        if (GetModuleFileNameW(NULL, buffer, MAX_PATH)) {
+            std::wstring execPath(buffer);
+            size_t lastSlash = execPath.find_last_of(L"\\");
+            std::wstring execName = lastSlash != std::wstring::npos ? execPath.substr(lastSlash + 1) : execPath;
+            // Strip extension for clean log file prefix
+            size_t lastDot = execName.find_last_of(L".");
+            std::wstring execStem = lastDot != std::wstring::npos ? execName.substr(0, lastDot) : execName;
+            logPrefix = std::string(execStem.begin(), execStem.end());
+        }
+    }
+
+    InitLogging(logPrefix);
     BOOST_LOG_NAMED_SCOPE("main");
 
     const auto config = &Config::GetInstance();

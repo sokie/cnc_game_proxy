@@ -1,6 +1,7 @@
 // ProxySSL.cpp : Implements the ProxySSL class and I/O abstractions for proxy operations.
 #include "ProxySSL.h"
 #include "ProxyCert.hpp"
+#include "../../Config.hpp"
 #include <boost/exception/diagnostic_information.hpp>
 #include "../../util.h"
 
@@ -94,6 +95,9 @@ void PlainSocketIO::close() {
 // ============================================================================
 
 ProxySSL::ProxySSL() {
+    // Read configured proxy listen port
+    proxyPort_ = Config::GetInstance().proxyListenPort;
+
     // Initialize OpenSSL
     initOpenSSL();
 }
@@ -150,7 +154,7 @@ bool ProxySSL::run() {
         return false;
     }
 
-    BOOST_LOG_TRIVIAL(info) << "Server started on port " << PROXY_PORT;
+    BOOST_LOG_TRIVIAL(info) << "Server started on port " << proxyPort_;
     BOOST_LOG_TRIVIAL(info) << "Using cipher list: " << CIPHER_LIST;
 
     // Start the cleanup thread for finished client threads
@@ -353,7 +357,7 @@ SOCKET ProxySSL::createServerSocket() {
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(PROXY_PORT);
+    addr.sin_port = htons(proxyPort_);
 
     if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         BOOST_LOG_TRIVIAL(error) << "Unable to bind: " << WSAGetLastError();

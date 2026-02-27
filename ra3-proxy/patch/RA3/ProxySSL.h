@@ -119,7 +119,6 @@ class ProxySSL
 {
 public:
     // Configuration constants
-    static constexpr int PROXY_PORT = 18840;
     static constexpr const char* CIPHER_LIST = "TLS_RSA_WITH_RC4_128_SHA:TLS_RSA_WITH_RC4_128_MD5:RC4-SHA:RC4-MD5";
     static constexpr size_t BUFFER_SIZE = 4096;
     static constexpr int SOCKET_TIMEOUT_MS = 30000;  // 30 second socket timeout
@@ -138,6 +137,11 @@ public:
         static ProxySSL instance;
         return instance;
     }
+
+    /**
+     * Get the configured proxy listen port.
+     */
+    USHORT getProxyPort() const { return proxyPort_; }
 
     /**
      * Initialize and run the proxy server.
@@ -169,6 +173,7 @@ private:
     std::thread cleanupThread_;
     SOCKET serverFd_{INVALID_SOCKET};
     SSL_CTX* ctx_{nullptr};
+    USHORT proxyPort_;
 
     void cleanupFinishedThreads();
     void startCleanupThread();

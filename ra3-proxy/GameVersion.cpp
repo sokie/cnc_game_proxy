@@ -66,6 +66,14 @@ void GameVersion::Identify() {
                         break;
                 }
             }
+            else if (info_.executableName == L"cnc3ep1.dat") {
+                identified_ = true;
+                BOOST_LOG_TRIVIAL(info) << "Command & Conquer 3: Kane's Wrath (v" << info_.major << "." << info_.minor << ")";
+            }
+            else if (info_.executableName == L"cnc3game.dat") {
+                identified_ = true;
+                BOOST_LOG_TRIVIAL(info) << "Command & Conquer 3: Tiberium Wars (v" << info_.major << "." << info_.minor << ")";
+            }
         }
     }
     CloseHandle(hProcess);
