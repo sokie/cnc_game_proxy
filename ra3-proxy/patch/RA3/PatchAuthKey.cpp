@@ -176,8 +176,8 @@ BOOL PatchAuthKey::Patch() const
 	std::byte* ptr = reinterpret_cast<std::byte*>(entryPoint_);
 	const auto& gameInfo = GameVersion::GetInstance().GetInfo();
 
-	if (gameInfo.executableName == L"cnc3ep1.dat") {
-		BOOST_LOG_TRIVIAL(info) << "Using Kane's Wrath auth patch...";
+	if (gameInfo.executableName == L"cnc3ep1.dat" || gameInfo.executableName == L"cnc3game.dat") {
+		BOOST_LOG_TRIVIAL(info) << "Using CnC3 auth patch...";
 		return PatchKW(ptr, size_);
 	}
 
