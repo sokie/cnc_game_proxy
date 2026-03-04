@@ -139,6 +139,7 @@ BOOL PatchAuthKey::Patch() const
 		"F7 D8 B8 01 00 00 00 ?? ?? 83 C4 ?? C3",         // pop r32; pop r32; add esp, imm8; ret
 		"F7 D8 B8 01 00 00 00 ?? C3",                     // pop r32; ret
 		"F7 D8 B8 01 00 00 00 C3",                        // just ret (no pop)
+		"F7 D8 B8 01 00 00 00 C2 ?? ??",                  // ret imm16 (stdcall, e.g. KW)
 	};
 
 	BOOST_LOG_TRIVIAL(debug) << "Checking if already patched...";
@@ -169,6 +170,10 @@ BOOL PatchAuthKey::Patch() const
 	PatternCandidate unpatched_patterns[] = {
 		// RA3 exact: pop esi; add esp, imm32; ret
 		{"F7 D8 1B C0 83 C0 01 5E 81 C4 ?? ?? 00 00 C3", 2, "RA3 exact (pop esi; add esp,imm32; ret)"},
+		// KW: ret 4 (stdcall, no register restore)
+		{"F7 D8 1B C0 83 C0 01 C2 04 00", 2, "KW exact (ret 4)"},
+		// Generic: ret imm16 (stdcall/callee-cleanup)
+		{"F7 D8 1B C0 83 C0 01 C2 ?? ??", 2, "ret imm16 (stdcall)"},
 		// Generic: pop r32; add esp, imm32; ret
 		{"F7 D8 1B C0 83 C0 01 ?? 81 C4 ?? ?? 00 00 C3", 2, "pop r32; add esp,imm32; ret"},
 		// pop r32; add esp, imm8; ret
