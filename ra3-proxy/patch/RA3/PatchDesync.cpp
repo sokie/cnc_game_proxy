@@ -13,7 +13,6 @@
 #include "../../Framework.h"
 #include "../../util.h"
 #include "../../GameVersion.h"
-#include "../../FPUGuard.h"
 #include "PatchDesync.hpp"
 
 extern std::vector<PatternByte> ParsePattern(const std::string& pattern_str);
@@ -228,7 +227,6 @@ static void* __fastcall hookXferSnapshot(
 	if (!g_crcTrack.active)
 		return pOriginalXferSnapshot(thisXfer, edx, snapshotPtr);
 
-	FPUGuard fpuGuard;
 
 	DWORD crcBefore = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisXfer) + 0x144);
 	const char* name = identifySubsystem(snapshotPtr);
@@ -293,7 +291,6 @@ static void* __fastcall hookXferInt(
 	if (!g_crcTrack.active || g_crcTrack.insideXferSnapshot)
 		return pOriginalXferInt(thisXfer, edx, valuePtr);
 
-	FPUGuard fpuGuard;
 
 	DWORD intValue = *reinterpret_cast<DWORD*>(valuePtr);
 	DWORD crcBefore = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisXfer) + 0x144);
@@ -328,7 +325,6 @@ static void* __fastcall hookXferInt(
 static DWORD __fastcall hookComputeStateCRC(
 	void* thisPtr, void* edx, UINT debugFileHandle)
 {
-	FPUGuard fpuGuard;
 
 	// Reset tracking state
 	memset(&g_crcTrack, 0, sizeof(g_crcTrack));

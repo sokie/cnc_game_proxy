@@ -8,7 +8,6 @@ found in the LICENSE file in the root directory of this source tree.
 #include "dllmain.h"
 #include "memory.h"
 #include "util.h"
-#include "FPUGuard.h"
 #include "Config.hpp"
 #include "PeerchatCipher.hpp"
 #include "EncTypeXCipher.hpp"
@@ -80,7 +79,7 @@ HINSTANCE WINAPI detourShellExecuteW(HWND hwnd, LPCWSTR lpOperation, LPCWSTR lpF
 
 std::atomic<bool> useAltPeerChatPort(false);
 int WSAAPI detourConnect(SOCKET s, const sockaddr* name, int namelen) {
-    FPUGuard fpuGuard;
+
     sockaddr_in* addr_in = (sockaddr_in*)name;
 
     if (addr_in->sin_family == AF_INET) {
@@ -289,7 +288,7 @@ bool parseMasterValidate(const char* data, size_t len, std::string& validate) {
 }
 
 int WSAAPI detourSend(SOCKET s, const char* buf, int len, int flags) {
-    FPUGuard fpuGuard; // Protect game's FPU state from Boost/CRT corruption
+
 
     BOOST_LOG_NAMED_SCOPE("detourSend");
 
@@ -369,7 +368,7 @@ int WSAAPI detourSend(SOCKET s, const char* buf, int len, int flags) {
 }
 
 int WSAAPI detourRecv(SOCKET s, char* buf, int len, int flags) {
-    FPUGuard fpuGuard; // Protect game's FPU state from Boost/CRT corruption
+
 
     // CRITICAL: Call the original recv and IMMEDIATELY capture the error code
     // before any other WinSock calls can overwrite it
@@ -480,7 +479,7 @@ int WSAAPI detourRecv(SOCKET s, char* buf, int len, int flags) {
 }
 
 struct hostent* WSAAPI detourGetHostByName(const char* name) {
-    FPUGuard fpuGuard;
+
     const auto& config = Config::GetInstance();
     std::string host(name);
     BOOST_LOG_TRIVIAL(info) << "Requested GetHostByName(): " << host.c_str();
