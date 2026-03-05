@@ -514,8 +514,11 @@ BOOL PatchDesync::Patch() const
 	bool needCheckDesync = config.logDesyncMismatch || config.forceCRCMatch;
 	bool needHandleDesync = config.suppressDesyncDialog;
 	bool needSubsystemCRC = config.logSubsystemCRC || config.logDesyncMismatch;
+	bool needCRCInterval = config.crcInterval > 0;
+	bool needDisableObjectCRC = config.disableObjectCRC;
 
-	if (!needCheckDesync && !needHandleDesync && !needSubsystemCRC)
+	if (!needCheckDesync && !needHandleDesync && !needSubsystemCRC &&
+		!needCRCInterval && !needDisableObjectCRC)
 	{
 		BOOST_LOG_TRIVIAL(info) << "Desync hooks disabled in config, skipping.";
 		return TRUE;
@@ -601,6 +604,71 @@ BOOL PatchDesync::Patch() const
 	{
 		BOOST_LOG_TRIVIAL(error) << "DetourTransactionCommit failed: " << result;
 		return FALSE;
+	}
+
+	// --- CRC interval override ---
+	// Write a larger interval to g_defaultCRCInterval so CRC checks happen less often.
+	// Default is ~450 frames (15 seconds). Setting to e.g. 9000 = 5 minutes.
+	if (needCRCInterval)
+	{
+		DWORD* pDefaultInterval = GlobalPtr(0x00bf3600);
+		DWORD* pNetInterval = GlobalPtr(0x00bf360c);
+
+		DWORD oldProtect;
+		if (VirtualProtect(pDefaultInterval, 4, PAGE_READWRITE, &oldProtect))
+		{
+			*pDefaultInterval = static_cast<DWORD>(config.crcInterval);
+			VirtualProtect(pDefaultInterval, 4, oldProtect, &oldProtect);
+		}
+		if (VirtualProtect(pNetInterval, 4, PAGE_READWRITE, &oldProtect))
+		{
+			*pNetInterval = static_cast<DWORD>(config.crcInterval);
+			VirtualProtect(pNetInterval, 4, oldProtect, &oldProtect);
+		}
+
+		BOOST_LOG_TRIVIAL(info) << "CRC interval overridden to " << config.crcInterval << " frames.";
+	}
+
+	// --- Disable object CRC ---
+	// In normal gameplay, GameLogic_Update temporarily sets g_liteCRC=1 before computing CRC.
+	// When liteCRC is on, ALL exclusion flags (-xObjectCRC etc.) are IGNORED.
+	// To make -xObjectCRC work, we NOP out the liteCRC=1 write in GameLogic_Update
+	// and set the xObjectCRC exclusion flag.
+	//
+	// GameLogic_Update at 0x004ee3f8: C6 05 53 34 BF 00 01  MOV BYTE [g_liteCRC], 1
+	// GameLogic_Update at 0x004ee406: C6 05 53 34 BF 00 00  MOV BYTE [g_liteCRC], 0
+	// We NOP the first (7 bytes) so liteCRC stays 0, then set g_xObjectCRC = 1.
+	if (needDisableObjectCRC)
+	{
+		// Pattern: C6 05 53 34 BF 00 01 (MOV BYTE [0x00bf3453], 1) followed eventually by
+		//          CALL ComputeStateCRC, then C6 05 53 34 BF 00 00
+		auto liteCRCPattern = ParsePattern("C6 05 53 34 BF 00 01");
+		std::byte* liteCRCSet = FindPattern(ptr, size_, liteCRCPattern);
+		if (liteCRCSet != nullptr)
+		{
+			DWORD oldProtect;
+			// NOP out the 7-byte "MOV BYTE [g_liteCRC], 1" instruction
+			if (VirtualProtect(liteCRCSet, 7, PAGE_EXECUTE_READWRITE, &oldProtect))
+			{
+				memset(liteCRCSet, 0x90, 7); // 7x NOP
+				VirtualProtect(liteCRCSet, 7, oldProtect, &oldProtect);
+				BOOST_LOG_TRIVIAL(info) << "Patched liteCRC override at: 0x"
+					<< std::hex << reinterpret_cast<DWORD>(liteCRCSet);
+			}
+
+			// Set g_xObjectCRC = 1 to exclude objects from CRC
+			BYTE* pXObjectCRC = reinterpret_cast<BYTE*>(GlobalPtr(0x00bf3448));
+			if (VirtualProtect(pXObjectCRC, 1, PAGE_READWRITE, &oldProtect))
+			{
+				*pXObjectCRC = 1;
+				VirtualProtect(pXObjectCRC, 1, oldProtect, &oldProtect);
+			}
+			BOOST_LOG_TRIVIAL(info) << "Disabled object CRC (g_xObjectCRC=1, liteCRC override NOPed).";
+		}
+		else
+		{
+			BOOST_LOG_TRIVIAL(error) << "Failed to find liteCRC override pattern for object CRC disable!";
+		}
 	}
 
 	BOOST_LOG_TRIVIAL(info) << "Desync hooks installed successfully.";

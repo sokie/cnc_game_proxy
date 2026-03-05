@@ -36,6 +36,8 @@ public:
 	bool suppressDesyncDialog;
 	bool logSubsystemCRC;
 	bool forceCRCMatch;
+	int crcInterval;           // 0 = game default, >0 = override CRC check interval (frames)
+	bool disableObjectCRC;     // exclude objects from CRC (requires liteCRC patch)
 
 	/* Proxy */
 	bool proxy_enable;
