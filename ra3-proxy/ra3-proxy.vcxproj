@@ -103,6 +103,7 @@
   <ItemGroup>
     <ClInclude Include="Config.hpp" />
     <ClInclude Include="dllmain.h" />
+    <ClInclude Include="FPUGuard.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="GameVersion.h" />
     <ClInclude Include="patch\RA3\PatchAuthKey.hpp" />

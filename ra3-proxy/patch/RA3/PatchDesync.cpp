@@ -13,6 +13,7 @@
 #include "../../Framework.h"
 #include "../../util.h"
 #include "../../GameVersion.h"
+#include "../../FPUGuard.h"
 #include "PatchDesync.hpp"
 
 extern std::vector<PatternByte> ParsePattern(const std::string& pattern_str);
@@ -52,7 +53,7 @@ struct SubsystemCRCEntry {
 
 // Object CRC checkpoint: CRC value sampled at every Nth object
 static const int OBJECT_CHECKPOINT_INTERVAL = 100;
-static const int MAX_OBJECT_CHECKPOINTS = 64; // supports up to 6400 objects
+static const int MAX_OBJECT_CHECKPOINTS = 256; // bulk checkpoints + per-object tail
 
 struct ObjectCheckpoint {
 	int objectIndex;   // which object number (0-based)
@@ -227,6 +228,8 @@ static void* __fastcall hookXferSnapshot(
 	if (!g_crcTrack.active)
 		return pOriginalXferSnapshot(thisXfer, edx, snapshotPtr);
 
+	FPUGuard fpuGuard;
+
 	DWORD crcBefore = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisXfer) + 0x144);
 	const char* name = identifySubsystem(snapshotPtr);
 
@@ -257,9 +260,14 @@ static void* __fastcall hookXferSnapshot(
 		g_crcTrack.objectCount++;
 		g_crcTrack.objectsCRCEnd = crcAfter;
 
-		// Record checkpoint every N objects
-		if ((g_crcTrack.objectCount % OBJECT_CHECKPOINT_INTERVAL) == 0 &&
-			g_crcTrack.checkpointCount < MAX_OBJECT_CHECKPOINTS)
+		// Record checkpoint: every N objects normally, every single object past 2000
+		bool shouldCheckpoint = false;
+		if (g_crcTrack.objectCount >= 2000)
+			shouldCheckpoint = true;  // every object in the tail
+		else if ((g_crcTrack.objectCount % OBJECT_CHECKPOINT_INTERVAL) == 0)
+			shouldCheckpoint = true;  // every N objects in the bulk
+
+		if (shouldCheckpoint && g_crcTrack.checkpointCount < MAX_OBJECT_CHECKPOINTS)
 		{
 			auto& cp = g_crcTrack.objectCheckpoints[g_crcTrack.checkpointCount++];
 			cp.objectIndex = g_crcTrack.objectCount;
@@ -284,6 +292,8 @@ static void* __fastcall hookXferInt(
 	// top-level xferInt calls: frame seed and player commands)
 	if (!g_crcTrack.active || g_crcTrack.insideXferSnapshot)
 		return pOriginalXferInt(thisXfer, edx, valuePtr);
+
+	FPUGuard fpuGuard;
 
 	DWORD intValue = *reinterpret_cast<DWORD*>(valuePtr);
 	DWORD crcBefore = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisXfer) + 0x144);
@@ -318,6 +328,8 @@ static void* __fastcall hookXferInt(
 static DWORD __fastcall hookComputeStateCRC(
 	void* thisPtr, void* edx, UINT debugFileHandle)
 {
+	FPUGuard fpuGuard;
+
 	// Reset tracking state
 	memset(&g_crcTrack, 0, sizeof(g_crcTrack));
 	g_crcTrack.active = true;
@@ -366,6 +378,7 @@ static void __fastcall hookCheckDesync(
 	UINT crcValue, UINT playerSlot, UINT frameNumber,
 	int context, char forceFlag, UINT binaryCRCData)
 {
+	FPUGuard fpuGuard;
 	const auto& config = Config::GetInstance();
 
 	if (config.logDesyncMismatch)
@@ -439,6 +452,7 @@ static void __fastcall hookHandleDesync(
 	void* thisPtr, void* edx,
 	int frameData, UINT frameNumber, UINT playerSlot)
 {
+	FPUGuard fpuGuard;
 	const auto& config = Config::GetInstance();
 
 	BOOST_LOG_TRIVIAL(warning)
