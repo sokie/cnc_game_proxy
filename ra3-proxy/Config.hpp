@@ -31,6 +31,10 @@ public:
 	bool patchSSL;
 	bool patchAuthKey;
 
+	/* Desync */
+	bool logDesyncMismatch;
+	bool suppressDesyncDialog;
+
 	/* Proxy */
 	bool proxy_enable;
 	USHORT proxyListenPort;

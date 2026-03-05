@@ -38,6 +38,10 @@ Config::Config()
 	patchSSL = pt.get("patches.SSL", true);
 	patchAuthKey = pt.get("patches.AuthKey", true);
 
+	// Section - Desync
+	logDesyncMismatch = pt.get("desync.logMismatch", false);
+	suppressDesyncDialog = pt.get("desync.suppressDialog", false);
+
 	// Section - Proxy
 	proxy_enable = pt.get("proxy.enable", true);
 	proxyListenPort = pt.get("proxy.listenPort", static_cast<USHORT>(18840));

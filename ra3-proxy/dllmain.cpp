@@ -15,6 +15,7 @@ found in the LICENSE file in the root directory of this source tree.
 #include "GameVersion.h"
 #include "patch/RA3/PatchSSL.hpp"
 #include "patch/RA3/PatchAuthKey.hpp"
+#include "patch/RA3/PatchDesync.hpp"
 #include "patch/RA3/ProxySSL.h"
 
 #include <map>
@@ -750,7 +751,7 @@ DWORD WINAPI Main(LPVOID lpReserved) {
     }
 
     // Identify game version
-    GameVersion::GetInstance();
+    const auto& gameInfo = GameVersion::GetInstance().GetInfo();
 
     if (config->patchSSL) {
         const PatchSSL* sslPatch = &PatchSSL::GetInstance();
@@ -765,6 +766,15 @@ DWORD WINAPI Main(LPVOID lpReserved) {
 
         if (!authKeyPatch->Patch()) {
             BOOST_LOG_TRIVIAL(error) << "Failed to patch AuthKey.";
+        }
+    }
+
+    if ((config->logDesyncMismatch || config->suppressDesyncDialog) &&
+        gameInfo.executableName == L"cnc3game.dat") {
+        const PatchDesync* desyncPatch = &PatchDesync::GetInstance();
+
+        if (!desyncPatch->Patch()) {
+            BOOST_LOG_TRIVIAL(error) << "Failed to install desync hooks.";
         }
     }
 

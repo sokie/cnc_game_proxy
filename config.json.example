@@ -9,6 +9,10 @@
     "patches": {
         "SSL": true
     },
+    "desync": {
+        "logMismatch": false,
+        "suppressDialog": false
+    },
     "proxy": {
         "enable": true,
         "destinationPort": 18840,
