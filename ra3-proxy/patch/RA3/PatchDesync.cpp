@@ -59,6 +59,14 @@ static struct {
 	int subsystemCount;
 	DWORD totalCRC;
 	DWORD frameNumber;
+	// XferInt tracking: frame seed + player commands
+	int xferIntCount;        // total xferInt calls seen
+	DWORD frameSeedValue;    // the frame seed integer value
+	DWORD frameSeedCRCBefore;
+	DWORD frameSeedCRCAfter;
+	bool frameSeedCaptured;
+	int playerCmdCount;
+	DWORD playerCmdSums[20]; // per-player command sums
 } g_crcTrack = {};
 
 // Last completed CRC breakdown (dumped on mismatch)
@@ -71,6 +79,11 @@ static struct {
 	DWORD objectsCRCEnd;
 	SubsystemCRCEntry subsystems[12];
 	int subsystemCount;
+	DWORD frameSeedValue;
+	DWORD frameSeedCRCBefore;
+	DWORD frameSeedCRCAfter;
+	int playerCmdCount;
+	DWORD playerCmdSums[20];
 } g_lastBreakdown = {};
 
 // ---------------------------------------------------------------------------
@@ -121,6 +134,12 @@ static void logCRCBreakdown(const char* prefix)
 			<< " -> 0x" << std::setw(8) << g_lastBreakdown.objectsCRCEnd;
 	}
 
+	BOOST_LOG_TRIVIAL(warning)
+		<< prefix << "  FrameSeed: value=0x"
+		<< std::hex << std::setfill('0') << std::setw(8) << g_lastBreakdown.frameSeedValue
+		<< " crc: 0x" << std::setw(8) << g_lastBreakdown.frameSeedCRCBefore
+		<< " -> 0x" << std::setw(8) << g_lastBreakdown.frameSeedCRCAfter;
+
 	for (int i = 0; i < g_lastBreakdown.subsystemCount; i++)
 	{
 		const auto& s = g_lastBreakdown.subsystems[i];
@@ -128,6 +147,18 @@ static void logCRCBreakdown(const char* prefix)
 			<< prefix << "  " << s.name << ": 0x"
 			<< std::hex << std::setfill('0') << std::setw(8) << s.crcBefore
 			<< " -> 0x" << std::setw(8) << s.crcAfter;
+	}
+
+	if (g_lastBreakdown.playerCmdCount > 0)
+	{
+		std::ostringstream oss;
+		oss << prefix << "  PlayerCmds (" << std::dec << g_lastBreakdown.playerCmdCount << "): ";
+		for (int i = 0; i < g_lastBreakdown.playerCmdCount && i < 20; i++)
+		{
+			if (i > 0) oss << ", ";
+			oss << "[" << i << "]=0x" << std::hex << g_lastBreakdown.playerCmdSums[i];
+		}
+		BOOST_LOG_TRIVIAL(warning) << oss.str();
 	}
 }
 
@@ -152,10 +183,15 @@ typedef DWORD(__fastcall* ComputeStateCRC_t)(
 typedef void* (__fastcall* XferSnapshot_t)(
 	void* thisXfer, void* edx, void* snapshotPtr);
 
+// XferCRC_XferInt: feeds a 4-byte int into CRC, returns this
+typedef void* (__fastcall* XferInt_t)(
+	void* thisXfer, void* edx, void* valuePtr);
+
 static CheckDesync_t pOriginalCheckDesync = nullptr;
 static HandleDesync_t pOriginalHandleDesync = nullptr;
 static ComputeStateCRC_t pOriginalComputeStateCRC = nullptr;
 static XferSnapshot_t pOriginalXferSnapshot = nullptr;
+static XferInt_t pOriginalXferInt = nullptr;
 
 // ---------------------------------------------------------------------------
 // Hook: XferCRC_XferSnapshot
@@ -198,6 +234,44 @@ static void* __fastcall hookXferSnapshot(
 }
 
 // ---------------------------------------------------------------------------
+// Hook: XferCRC_XferInt
+// Captures frame seed and player command sums during CRC computation
+// Order in ComputeStateCRC: CRCParams(xferInt*N) -> Objects -> FrameSeed(xferInt)
+//                           -> Subsystems -> PlayerCmds(xferInt*20) -> VerifyBool
+// ---------------------------------------------------------------------------
+static void* __fastcall hookXferInt(
+	void* thisXfer, void* edx, void* valuePtr)
+{
+	if (!g_crcTrack.active)
+		return pOriginalXferInt(thisXfer, edx, valuePtr);
+
+	DWORD intValue = *reinterpret_cast<DWORD*>(valuePtr);
+	DWORD crcBefore = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisXfer) + 0x144);
+
+	void* result = pOriginalXferInt(thisXfer, edx, valuePtr);
+
+	DWORD crcAfter = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisXfer) + 0x144);
+
+	// Frame seed: first xferInt AFTER objects have been seen, BEFORE subsystems
+	if (g_crcTrack.objectCount > 0 && !g_crcTrack.frameSeedCaptured &&
+		g_crcTrack.subsystemCount == 0)
+	{
+		g_crcTrack.frameSeedValue = intValue;
+		g_crcTrack.frameSeedCRCBefore = crcBefore;
+		g_crcTrack.frameSeedCRCAfter = crcAfter;
+		g_crcTrack.frameSeedCaptured = true;
+	}
+	// Player command sums: xferInt calls AFTER subsystems have been seen
+	else if (g_crcTrack.subsystemCount > 0 && g_crcTrack.playerCmdCount < 20)
+	{
+		g_crcTrack.playerCmdSums[g_crcTrack.playerCmdCount++] = intValue;
+	}
+
+	g_crcTrack.xferIntCount++;
+	return result;
+}
+
+// ---------------------------------------------------------------------------
 // Hook: GameLogic_ComputeStateCRC
 // Wraps the CRC computation to track per-subsystem contributions
 // ---------------------------------------------------------------------------
@@ -224,6 +298,12 @@ static DWORD __fastcall hookComputeStateCRC(
 	g_lastBreakdown.subsystemCount = g_crcTrack.subsystemCount;
 	memcpy(g_lastBreakdown.subsystems, g_crcTrack.subsystems,
 		sizeof(SubsystemCRCEntry) * g_crcTrack.subsystemCount);
+	g_lastBreakdown.frameSeedValue = g_crcTrack.frameSeedValue;
+	g_lastBreakdown.frameSeedCRCBefore = g_crcTrack.frameSeedCRCBefore;
+	g_lastBreakdown.frameSeedCRCAfter = g_crcTrack.frameSeedCRCAfter;
+	g_lastBreakdown.playerCmdCount = g_crcTrack.playerCmdCount;
+	memcpy(g_lastBreakdown.playerCmdSums, g_crcTrack.playerCmdSums,
+		sizeof(DWORD) * g_crcTrack.playerCmdCount);
 
 	const auto& config = Config::GetInstance();
 	if (config.logSubsystemCRC)
@@ -354,6 +434,10 @@ static const char* PATTERN_COMPUTE_CRC =
 static const char* PATTERN_XFER_SNAPSHOT =
 	"53 8B 5C 24 08 56 8B F1 80 BE 0C 01 00 00 00";
 
+// XferCRC_XferInt: 56 6A 04 FF 74 24 0C 8B F1 8B 06 68
+static const char* PATTERN_XFER_INT =
+	"56 6A 04 FF 74 24 0C 8B F1 8B 06 68";
+
 PatchDesync::PatchDesync()
 {
 	HANDLE hModule = GetModuleHandle(nullptr);
@@ -398,6 +482,7 @@ BOOL PatchDesync::Patch() const
 	std::byte* addrHandleDesync = nullptr;
 	std::byte* addrComputeCRC = nullptr;
 	std::byte* addrXferSnapshot = nullptr;
+	std::byte* addrXferInt = nullptr;
 
 	if (needCheckDesync)
 		addrCheckDesync = findFunc(PATTERN_CHECK_DESYNC, "GameLogic_CheckDesync");
@@ -407,12 +492,13 @@ BOOL PatchDesync::Patch() const
 	{
 		addrComputeCRC = findFunc(PATTERN_COMPUTE_CRC, "GameLogic_ComputeStateCRC");
 		addrXferSnapshot = findFunc(PATTERN_XFER_SNAPSHOT, "XferCRC_XferSnapshot");
+		addrXferInt = findFunc(PATTERN_XFER_INT, "XferCRC_XferInt");
 	}
 
 	// Verify all required functions were found
 	if ((needCheckDesync && !addrCheckDesync) ||
 		(needHandleDesync && !addrHandleDesync) ||
-		(needSubsystemCRC && (!addrComputeCRC || !addrXferSnapshot)))
+		(needSubsystemCRC && (!addrComputeCRC || !addrXferSnapshot || !addrXferInt)))
 	{
 		BOOST_LOG_TRIVIAL(error) << "Required function pattern(s) not found, aborting.";
 		return FALSE;
@@ -445,6 +531,12 @@ BOOL PatchDesync::Patch() const
 		pOriginalXferSnapshot = reinterpret_cast<XferSnapshot_t>(addrXferSnapshot);
 		DetourAttach(&reinterpret_cast<PVOID&>(pOriginalXferSnapshot), hookXferSnapshot);
 		BOOST_LOG_TRIVIAL(info) << "Hooked XferCRC_XferSnapshot.";
+	}
+	if (addrXferInt)
+	{
+		pOriginalXferInt = reinterpret_cast<XferInt_t>(addrXferInt);
+		DetourAttach(&reinterpret_cast<PVOID&>(pOriginalXferInt), hookXferInt);
+		BOOST_LOG_TRIVIAL(info) << "Hooked XferCRC_XferInt.";
 	}
 
 	LONG result = DetourTransactionCommit();
