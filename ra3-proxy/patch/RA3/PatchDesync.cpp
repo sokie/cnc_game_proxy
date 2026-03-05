@@ -374,7 +374,6 @@ static void __fastcall hookCheckDesync(
 	UINT crcValue, UINT playerSlot, UINT frameNumber,
 	int context, char forceFlag, UINT binaryCRCData)
 {
-	FPUGuard fpuGuard;
 	const auto& config = Config::GetInstance();
 
 	if (config.logDesyncMismatch)
@@ -448,7 +447,6 @@ static void __fastcall hookHandleDesync(
 	void* thisPtr, void* edx,
 	int frameData, UINT frameNumber, UINT playerSlot)
 {
-	FPUGuard fpuGuard;
 	const auto& config = Config::GetInstance();
 
 	BOOST_LOG_TRIVIAL(warning)
