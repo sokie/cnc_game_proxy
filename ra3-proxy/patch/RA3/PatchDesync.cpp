@@ -50,6 +50,15 @@ struct SubsystemCRCEntry {
 	DWORD crcAfter;
 };
 
+// Object CRC checkpoint: CRC value sampled at every Nth object
+static const int OBJECT_CHECKPOINT_INTERVAL = 100;
+static const int MAX_OBJECT_CHECKPOINTS = 64; // supports up to 6400 objects
+
+struct ObjectCheckpoint {
+	int objectIndex;   // which object number (0-based)
+	DWORD crcAfter;    // CRC after this object was xfered
+};
+
 static struct {
 	bool active;
 	int objectCount;
@@ -65,8 +74,12 @@ static struct {
 	DWORD frameSeedCRCBefore;
 	DWORD frameSeedCRCAfter;
 	bool frameSeedCaptured;
+	bool insideXferSnapshot; // true while inside a xferSnapshot call (to ignore nested xferInt)
 	int playerCmdCount;
 	DWORD playerCmdSums[20]; // per-player command sums
+	// Object CRC checkpoints: sampled every N objects
+	ObjectCheckpoint objectCheckpoints[MAX_OBJECT_CHECKPOINTS];
+	int checkpointCount;
 } g_crcTrack = {};
 
 // Last completed CRC breakdown (dumped on mismatch)
@@ -84,6 +97,8 @@ static struct {
 	DWORD frameSeedCRCAfter;
 	int playerCmdCount;
 	DWORD playerCmdSums[20];
+	ObjectCheckpoint objectCheckpoints[MAX_OBJECT_CHECKPOINTS];
+	int checkpointCount;
 } g_lastBreakdown = {};
 
 // ---------------------------------------------------------------------------
@@ -132,6 +147,15 @@ static void logCRCBreakdown(const char* prefix)
 			<< prefix << "  Objects (" << std::dec << g_lastBreakdown.objectCount << "): 0x"
 			<< std::hex << std::setfill('0') << std::setw(8) << g_lastBreakdown.objectsCRCStart
 			<< " -> 0x" << std::setw(8) << g_lastBreakdown.objectsCRCEnd;
+
+		// Log object checkpoints (CRC sampled every N objects)
+		for (int i = 0; i < g_lastBreakdown.checkpointCount; i++)
+		{
+			const auto& cp = g_lastBreakdown.objectCheckpoints[i];
+			BOOST_LOG_TRIVIAL(warning)
+				<< prefix << "    obj[" << std::dec << cp.objectIndex << "]: 0x"
+				<< std::hex << std::setfill('0') << std::setw(8) << cp.crcAfter;
+		}
 	}
 
 	BOOST_LOG_TRIVIAL(warning)
@@ -206,7 +230,11 @@ static void* __fastcall hookXferSnapshot(
 	DWORD crcBefore = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisXfer) + 0x144);
 	const char* name = identifySubsystem(snapshotPtr);
 
+	// Mark that we're inside xferSnapshot so hookXferInt ignores nested calls
+	// (objects call xferInt internally for their fields)
+	g_crcTrack.insideXferSnapshot = true;
 	void* result = pOriginalXferSnapshot(thisXfer, edx, snapshotPtr);
+	g_crcTrack.insideXferSnapshot = false;
 
 	DWORD crcAfter = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisXfer) + 0x144);
 
@@ -228,6 +256,15 @@ static void* __fastcall hookXferSnapshot(
 			g_crcTrack.objectsCRCStart = crcBefore;
 		g_crcTrack.objectCount++;
 		g_crcTrack.objectsCRCEnd = crcAfter;
+
+		// Record checkpoint every N objects
+		if ((g_crcTrack.objectCount % OBJECT_CHECKPOINT_INTERVAL) == 0 &&
+			g_crcTrack.checkpointCount < MAX_OBJECT_CHECKPOINTS)
+		{
+			auto& cp = g_crcTrack.objectCheckpoints[g_crcTrack.checkpointCount++];
+			cp.objectIndex = g_crcTrack.objectCount;
+			cp.crcAfter = crcAfter;
+		}
 	}
 
 	return result;
@@ -242,7 +279,10 @@ static void* __fastcall hookXferSnapshot(
 static void* __fastcall hookXferInt(
 	void* thisXfer, void* edx, void* valuePtr)
 {
-	if (!g_crcTrack.active)
+	// Skip if not tracking, or if we're inside a xferSnapshot call
+	// (objects call xferInt internally for their fields — we only want
+	// top-level xferInt calls: frame seed and player commands)
+	if (!g_crcTrack.active || g_crcTrack.insideXferSnapshot)
 		return pOriginalXferInt(thisXfer, edx, valuePtr);
 
 	DWORD intValue = *reinterpret_cast<DWORD*>(valuePtr);
@@ -252,7 +292,7 @@ static void* __fastcall hookXferInt(
 
 	DWORD crcAfter = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisXfer) + 0x144);
 
-	// Frame seed: first xferInt AFTER objects have been seen, BEFORE subsystems
+	// Frame seed: first top-level xferInt AFTER objects, BEFORE subsystems
 	if (g_crcTrack.objectCount > 0 && !g_crcTrack.frameSeedCaptured &&
 		g_crcTrack.subsystemCount == 0)
 	{
@@ -261,7 +301,7 @@ static void* __fastcall hookXferInt(
 		g_crcTrack.frameSeedCRCAfter = crcAfter;
 		g_crcTrack.frameSeedCaptured = true;
 	}
-	// Player command sums: xferInt calls AFTER subsystems have been seen
+	// Player command sums: top-level xferInt calls AFTER subsystems
 	else if (g_crcTrack.subsystemCount > 0 && g_crcTrack.playerCmdCount < 20)
 	{
 		g_crcTrack.playerCmdSums[g_crcTrack.playerCmdCount++] = intValue;
@@ -304,6 +344,9 @@ static DWORD __fastcall hookComputeStateCRC(
 	g_lastBreakdown.playerCmdCount = g_crcTrack.playerCmdCount;
 	memcpy(g_lastBreakdown.playerCmdSums, g_crcTrack.playerCmdSums,
 		sizeof(DWORD) * g_crcTrack.playerCmdCount);
+	g_lastBreakdown.checkpointCount = g_crcTrack.checkpointCount;
+	memcpy(g_lastBreakdown.objectCheckpoints, g_crcTrack.objectCheckpoints,
+		sizeof(ObjectCheckpoint) * g_crcTrack.checkpointCount);
 
 	const auto& config = Config::GetInstance();
 	if (config.logSubsystemCRC)
