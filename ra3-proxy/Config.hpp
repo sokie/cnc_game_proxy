@@ -34,6 +34,8 @@ public:
 	/* Desync */
 	bool logDesyncMismatch;
 	bool suppressDesyncDialog;
+	bool logSubsystemCRC;
+	bool forceCRCMatch;
 
 	/* Proxy */
 	bool proxy_enable;

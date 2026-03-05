@@ -11,7 +11,9 @@
     },
     "desync": {
         "logMismatch": false,
-        "suppressDialog": false
+        "suppressDialog": false,
+        "logSubsystemCRC": false,
+        "forceCRCMatch": false
     },
     "proxy": {
         "enable": true,

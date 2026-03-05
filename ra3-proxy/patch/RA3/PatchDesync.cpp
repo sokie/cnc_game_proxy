@@ -1,13 +1,14 @@
 // PatchDesync.cpp : Hooks for CNC3 desync detection and handling.
 //
-// Hooks two game functions:
-//   1. GameLogic_CheckDesync (0x004cdefd in cnc3game.dat)
-//      - Called every NetCRCInterval frames to compare CRC values between peers
-//      - Hook logs CRC mismatches with frame, player, and CRC values
-//
-//   2. GameLogic_HandleDesync (0x004c8410 in cnc3game.dat)
-//      - Called when a desync is confirmed, shows dialog and writes dump files
-//      - Hook can suppress the dialog/disconnect via config flag
+// Hooks four game functions:
+//   1. GameLogic_CheckDesync (0x004cdefd)
+//      - Logs CRC mismatches, optionally forces CRC match to prevent desync
+//   2. GameLogic_HandleDesync (0x004c8410)
+//      - Optionally suppresses the desync dialog/disconnect
+//   3. GameLogic_ComputeStateCRC (0x004b6901)
+//      - Tracks per-subsystem CRC contributions
+//   4. XferCRC_XferSnapshot (0x009dc6a3)
+//      - Captures before/after CRC for each subsystem during computation
 //
 #include "../../Framework.h"
 #include "../../util.h"
@@ -16,6 +17,17 @@
 
 extern std::vector<PatternByte> ParsePattern(const std::string& pattern_str);
 extern std::byte* FindPattern(std::byte* start_address, size_t search_length, const std::vector<PatternByte>& pattern);
+
+// ---------------------------------------------------------------------------
+// Module base for resolving Ghidra addresses at runtime
+// ---------------------------------------------------------------------------
+static DWORD s_moduleBase = 0;
+static const DWORD PE_IMAGE_BASE = 0x00400000;
+
+inline DWORD* GlobalPtr(DWORD ghidraAddr)
+{
+	return reinterpret_cast<DWORD*>(s_moduleBase + (ghidraAddr - PE_IMAGE_BASE));
+}
 
 // ---------------------------------------------------------------------------
 // CRC entry node in the linked list at GameLogic+0x40
@@ -30,29 +42,201 @@ struct CRCEntry {
 };
 
 // ---------------------------------------------------------------------------
+// Per-subsystem CRC tracking state
+// ---------------------------------------------------------------------------
+struct SubsystemCRCEntry {
+	const char* name;
+	DWORD crcBefore;
+	DWORD crcAfter;
+};
+
+static struct {
+	bool active;
+	int objectCount;
+	DWORD objectsCRCStart;
+	DWORD objectsCRCEnd;
+	SubsystemCRCEntry subsystems[12];
+	int subsystemCount;
+	DWORD totalCRC;
+	DWORD frameNumber;
+} g_crcTrack = {};
+
+// Last completed CRC breakdown (dumped on mismatch)
+static struct {
+	bool valid;
+	DWORD frameNumber;
+	DWORD totalCRC;
+	int objectCount;
+	DWORD objectsCRCStart;
+	DWORD objectsCRCEnd;
+	SubsystemCRCEntry subsystems[12];
+	int subsystemCount;
+} g_lastBreakdown = {};
+
+// ---------------------------------------------------------------------------
+// Subsystem identification from snapshot pointer
+// ---------------------------------------------------------------------------
+struct SubsystemGlobal {
+	DWORD ghidraAddr;
+	const char* name;
+};
+
+static const SubsystemGlobal KNOWN_SUBSYSTEMS[] = {
+	{ 0x00bf3490, "Partition" },
+	{ 0x00bf349c, "Collision" },
+	{ 0x00bf3494, "Shroud" },
+	{ 0x00bf3498, "Taint" },
+	{ 0x00bf958c, "SkirmishAI" },
+	{ 0x00bee110, "PlayerList" },
+	{ 0x00bf4d24, "AI" },
+	{ 0x00bf9548, "Display" },
+};
+
+static const char* identifySubsystem(void* snapshotPtr)
+{
+	DWORD addr = reinterpret_cast<DWORD>(snapshotPtr);
+	for (const auto& sys : KNOWN_SUBSYSTEMS)
+	{
+		DWORD globalVal = *GlobalPtr(sys.ghidraAddr);
+		if (globalVal != 0 && addr == globalVal + 0x18)
+			return sys.name;
+	}
+	return nullptr;
+}
+
+static void logCRCBreakdown(const char* prefix)
+{
+	if (!g_lastBreakdown.valid)
+		return;
+
+	BOOST_LOG_TRIVIAL(warning)
+		<< prefix << "Frame " << g_lastBreakdown.frameNumber
+		<< " total=0x" << std::hex << std::setfill('0') << std::setw(8) << g_lastBreakdown.totalCRC;
+
+	if (g_lastBreakdown.objectCount > 0)
+	{
+		BOOST_LOG_TRIVIAL(warning)
+			<< prefix << "  Objects (" << std::dec << g_lastBreakdown.objectCount << "): 0x"
+			<< std::hex << std::setfill('0') << std::setw(8) << g_lastBreakdown.objectsCRCStart
+			<< " -> 0x" << std::setw(8) << g_lastBreakdown.objectsCRCEnd;
+	}
+
+	for (int i = 0; i < g_lastBreakdown.subsystemCount; i++)
+	{
+		const auto& s = g_lastBreakdown.subsystems[i];
+		BOOST_LOG_TRIVIAL(warning)
+			<< prefix << "  " << s.name << ": 0x"
+			<< std::hex << std::setfill('0') << std::setw(8) << s.crcBefore
+			<< " -> 0x" << std::setw(8) << s.crcAfter;
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Function typedefs (__fastcall trick for __thiscall hooks)
 // ---------------------------------------------------------------------------
 
-// GameLogic_CheckDesync:
-//   void __thiscall(this, uint crcValue, uint playerSlot, uint frameNumber,
-//                   int context, char forceFlag, uint binaryCRCData)
 typedef void(__fastcall* CheckDesync_t)(
 	void* thisPtr, void* edx,
 	UINT crcValue, UINT playerSlot, UINT frameNumber,
 	int context, char forceFlag, UINT binaryCRCData);
 
-// GameLogic_HandleDesync:
-//   void __thiscall(this, int frameData, uint frameNumber, uint playerSlot)
 typedef void(__fastcall* HandleDesync_t)(
 	void* thisPtr, void* edx,
 	int frameData, UINT frameNumber, UINT playerSlot);
 
+// GameLogic_ComputeStateCRC: returns CRC value
+typedef DWORD(__fastcall* ComputeStateCRC_t)(
+	void* thisPtr, void* edx, UINT debugFileHandle);
+
+// XferCRC_XferSnapshot: returns this
+typedef void* (__fastcall* XferSnapshot_t)(
+	void* thisXfer, void* edx, void* snapshotPtr);
+
 static CheckDesync_t pOriginalCheckDesync = nullptr;
 static HandleDesync_t pOriginalHandleDesync = nullptr;
+static ComputeStateCRC_t pOriginalComputeStateCRC = nullptr;
+static XferSnapshot_t pOriginalXferSnapshot = nullptr;
+
+// ---------------------------------------------------------------------------
+// Hook: XferCRC_XferSnapshot
+// Captures per-subsystem CRC contributions during state CRC computation
+// ---------------------------------------------------------------------------
+static void* __fastcall hookXferSnapshot(
+	void* thisXfer, void* edx, void* snapshotPtr)
+{
+	if (!g_crcTrack.active)
+		return pOriginalXferSnapshot(thisXfer, edx, snapshotPtr);
+
+	DWORD crcBefore = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisXfer) + 0x144);
+	const char* name = identifySubsystem(snapshotPtr);
+
+	void* result = pOriginalXferSnapshot(thisXfer, edx, snapshotPtr);
+
+	DWORD crcAfter = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisXfer) + 0x144);
+
+	if (name)
+	{
+		// Known subsystem
+		if (g_crcTrack.subsystemCount < 12)
+		{
+			auto& entry = g_crcTrack.subsystems[g_crcTrack.subsystemCount++];
+			entry.name = name;
+			entry.crcBefore = crcBefore;
+			entry.crcAfter = crcAfter;
+		}
+	}
+	else
+	{
+		// Game object
+		if (g_crcTrack.objectCount == 0)
+			g_crcTrack.objectsCRCStart = crcBefore;
+		g_crcTrack.objectCount++;
+		g_crcTrack.objectsCRCEnd = crcAfter;
+	}
+
+	return result;
+}
+
+// ---------------------------------------------------------------------------
+// Hook: GameLogic_ComputeStateCRC
+// Wraps the CRC computation to track per-subsystem contributions
+// ---------------------------------------------------------------------------
+static DWORD __fastcall hookComputeStateCRC(
+	void* thisPtr, void* edx, UINT debugFileHandle)
+{
+	// Reset tracking state
+	memset(&g_crcTrack, 0, sizeof(g_crcTrack));
+	g_crcTrack.active = true;
+
+	DWORD result = pOriginalComputeStateCRC(thisPtr, edx, debugFileHandle);
+
+	g_crcTrack.active = false;
+	g_crcTrack.totalCRC = result;
+	g_crcTrack.frameNumber = *reinterpret_cast<DWORD*>(static_cast<BYTE*>(thisPtr) + 0x38);
+
+	// Save breakdown for later (dumped on mismatch)
+	g_lastBreakdown.valid = true;
+	g_lastBreakdown.frameNumber = g_crcTrack.frameNumber;
+	g_lastBreakdown.totalCRC = result;
+	g_lastBreakdown.objectCount = g_crcTrack.objectCount;
+	g_lastBreakdown.objectsCRCStart = g_crcTrack.objectsCRCStart;
+	g_lastBreakdown.objectsCRCEnd = g_crcTrack.objectsCRCEnd;
+	g_lastBreakdown.subsystemCount = g_crcTrack.subsystemCount;
+	memcpy(g_lastBreakdown.subsystems, g_crcTrack.subsystems,
+		sizeof(SubsystemCRCEntry) * g_crcTrack.subsystemCount);
+
+	const auto& config = Config::GetInstance();
+	if (config.logSubsystemCRC)
+	{
+		logCRCBreakdown("[CRC] ");
+	}
+
+	return result;
+}
 
 // ---------------------------------------------------------------------------
 // Hook: GameLogic_CheckDesync
-// Logs CRC mismatches before passing through to original
+// Logs mismatches, dumps per-subsystem CRC, optionally forces match
 // ---------------------------------------------------------------------------
 static void __fastcall hookCheckDesync(
 	void* thisPtr, void* edx,
@@ -63,18 +247,14 @@ static void __fastcall hookCheckDesync(
 
 	if (config.logDesyncMismatch)
 	{
-		// Walk the CRC linked list at this+0x40 to find existing entry for this frame
 		CRCEntry* entry = *reinterpret_cast<CRCEntry**>(
 			static_cast<BYTE*>(thisPtr) + 0x40);
 
 		while (entry != nullptr && entry->frameNumber < frameNumber)
-		{
 			entry = entry->next;
-		}
 
 		if (entry != nullptr && entry->frameNumber == frameNumber)
 		{
-			// Entry exists for this frame -- check if incoming CRC matches
 			if (crcValue != entry->crcValue)
 			{
 				BOOST_LOG_TRIVIAL(warning)
@@ -84,6 +264,9 @@ static void __fastcall hookCheckDesync(
 					<< std::dec << " from player " << playerSlot
 					<< " (confirmed by " << entry->playerCount << " player(s) so far"
 					<< ", bitmask=0x" << std::hex << entry->playerBitmask << std::dec << ")";
+
+				// Dump per-subsystem CRC breakdown if available
+				logCRCBreakdown("[DESYNC-DETAIL] ");
 			}
 			else
 			{
@@ -95,11 +278,29 @@ static void __fastcall hookCheckDesync(
 		}
 		else
 		{
-			// First CRC for this frame -- log it
 			BOOST_LOG_TRIVIAL(debug)
 				<< "[DESYNC] CRC check frame " << frameNumber
 				<< ": 0x" << std::hex << std::setfill('0') << std::setw(8) << crcValue
 				<< std::dec << " from player " << playerSlot << " (first)";
+		}
+	}
+
+	// Force CRC match: override incoming CRC to prevent desync detection
+	if (config.forceCRCMatch)
+	{
+		CRCEntry* entry = *reinterpret_cast<CRCEntry**>(
+			static_cast<BYTE*>(thisPtr) + 0x40);
+
+		while (entry != nullptr && entry->frameNumber < frameNumber)
+			entry = entry->next;
+
+		if (entry != nullptr && entry->frameNumber == frameNumber && crcValue != entry->crcValue)
+		{
+			BOOST_LOG_TRIVIAL(info)
+				<< "[DESYNC] Forcing CRC match on frame " << frameNumber
+				<< ": overriding 0x" << std::hex << std::setfill('0') << std::setw(8) << crcValue
+				<< " with 0x" << std::setw(8) << entry->crcValue << std::dec;
+			crcValue = entry->crcValue;
 		}
 	}
 
@@ -124,10 +325,7 @@ static void __fastcall hookHandleDesync(
 
 	if (config.suppressDesyncDialog)
 	{
-		// Set the desync flag (this+0x6a) so the game stops re-triggering
-		// desync checks for subsequent frames, but skip the dialog and dump files
 		*reinterpret_cast<BYTE*>(static_cast<BYTE*>(thisPtr) + 0x6a) = 1;
-
 		BOOST_LOG_TRIVIAL(info)
 			<< "[DESYNC] Desync dialog suppressed (config: desync.suppressDialog=true)";
 		return;
@@ -140,17 +338,21 @@ static void __fastcall hookHandleDesync(
 // Pattern-based function lookup
 // ---------------------------------------------------------------------------
 
-// GameLogic_CheckDesync prologue:
-//   55 8B EC 51 53 56 8B F1 33 DB 57 8B 7E 40
-//   PUSH EBP; MOV EBP,ESP; PUSH ECX; PUSH EBX; PUSH ESI; MOV ESI,ECX;
-//   XOR EBX,EBX; PUSH EDI; MOV EDI,[ESI+0x40]
-static const char* PATTERN_CHECK_DESYNC = "55 8B EC 51 53 56 8B F1 33 DB 57 8B 7E 40";
+// GameLogic_CheckDesync: 55 8B EC 51 53 56 8B F1 33 DB 57 8B 7E 40
+static const char* PATTERN_CHECK_DESYNC =
+	"55 8B EC 51 53 56 8B F1 33 DB 57 8B 7E 40";
 
-// GameLogic_HandleDesync prologue:
-//   55 8B EC 81 EC 1C 01 00 00 53 8B D9 57 C6 43 6A 01 33 FF
-//   PUSH EBP; MOV EBP,ESP; SUB ESP,0x11C; PUSH EBX; MOV EBX,ECX;
-//   PUSH EDI; MOV BYTE [EBX+0x6A],1; XOR EDI,EDI
-static const char* PATTERN_HANDLE_DESYNC = "55 8B EC 81 EC 1C 01 00 00 53 8B D9 57 C6 43 6A 01 33 FF";
+// GameLogic_HandleDesync: 55 8B EC 81 EC 1C 01 00 00 53 8B D9 57 C6 43 6A 01 33 FF
+static const char* PATTERN_HANDLE_DESYNC =
+	"55 8B EC 81 EC 1C 01 00 00 53 8B D9 57 C6 43 6A 01 33 FF";
+
+// GameLogic_ComputeStateCRC: 55 8D 6C 24 8C 81 EC 5C 01 00 00 53 56 57 8B F9
+static const char* PATTERN_COMPUTE_CRC =
+	"55 8D 6C 24 8C 81 EC 5C 01 00 00 53 56 57 8B F9";
+
+// XferCRC_XferSnapshot: 53 8B 5C 24 08 56 8B F1 80 BE 0C 01 00 00 00
+static const char* PATTERN_XFER_SNAPSHOT =
+	"53 8B 5C 24 08 56 8B F1 80 BE 0C 01 00 00 00";
 
 PatchDesync::PatchDesync()
 {
@@ -166,8 +368,13 @@ BOOL PatchDesync::Patch() const
 	BOOST_LOG_NAMED_SCOPE("DesyncPatch")
 
 	const auto& config = Config::GetInstance();
+	s_moduleBase = baseAddress_;
 
-	if (!config.logDesyncMismatch && !config.suppressDesyncDialog)
+	bool needCheckDesync = config.logDesyncMismatch || config.forceCRCMatch;
+	bool needHandleDesync = config.suppressDesyncDialog;
+	bool needSubsystemCRC = config.logSubsystemCRC || config.logDesyncMismatch;
+
+	if (!needCheckDesync && !needHandleDesync && !needSubsystemCRC)
 	{
 		BOOST_LOG_TRIVIAL(info) << "Desync hooks disabled in config, skipping.";
 		return TRUE;
@@ -175,45 +382,69 @@ BOOL PatchDesync::Patch() const
 
 	std::byte* ptr = reinterpret_cast<std::byte*>(entryPoint_);
 
-	// --- Find GameLogic_CheckDesync ---
-	auto pattern = ParsePattern(PATTERN_CHECK_DESYNC);
-	std::byte* addrCheckDesync = FindPattern(ptr, size_, pattern);
-	if (addrCheckDesync == nullptr)
-	{
-		BOOST_LOG_TRIVIAL(error) << "Failed to find GameLogic_CheckDesync pattern!";
-		return FALSE;
-	}
-	BOOST_LOG_TRIVIAL(info) << "Found GameLogic_CheckDesync at: 0x"
-		<< std::hex << reinterpret_cast<DWORD>(addrCheckDesync);
+	// --- Find all required functions ---
+	auto findFunc = [&](const char* patternStr, const char* name) -> std::byte* {
+		auto pattern = ParsePattern(patternStr);
+		std::byte* addr = FindPattern(ptr, size_, pattern);
+		if (addr)
+			BOOST_LOG_TRIVIAL(info) << "Found " << name << " at: 0x"
+				<< std::hex << reinterpret_cast<DWORD>(addr);
+		else
+			BOOST_LOG_TRIVIAL(error) << "Failed to find " << name << " pattern!";
+		return addr;
+	};
 
-	// --- Find GameLogic_HandleDesync ---
-	pattern = ParsePattern(PATTERN_HANDLE_DESYNC);
-	std::byte* addrHandleDesync = FindPattern(ptr, size_, pattern);
-	if (addrHandleDesync == nullptr)
+	std::byte* addrCheckDesync = nullptr;
+	std::byte* addrHandleDesync = nullptr;
+	std::byte* addrComputeCRC = nullptr;
+	std::byte* addrXferSnapshot = nullptr;
+
+	if (needCheckDesync)
+		addrCheckDesync = findFunc(PATTERN_CHECK_DESYNC, "GameLogic_CheckDesync");
+	if (needHandleDesync)
+		addrHandleDesync = findFunc(PATTERN_HANDLE_DESYNC, "GameLogic_HandleDesync");
+	if (needSubsystemCRC)
 	{
-		BOOST_LOG_TRIVIAL(error) << "Failed to find GameLogic_HandleDesync pattern!";
+		addrComputeCRC = findFunc(PATTERN_COMPUTE_CRC, "GameLogic_ComputeStateCRC");
+		addrXferSnapshot = findFunc(PATTERN_XFER_SNAPSHOT, "XferCRC_XferSnapshot");
+	}
+
+	// Verify all required functions were found
+	if ((needCheckDesync && !addrCheckDesync) ||
+		(needHandleDesync && !addrHandleDesync) ||
+		(needSubsystemCRC && (!addrComputeCRC || !addrXferSnapshot)))
+	{
+		BOOST_LOG_TRIVIAL(error) << "Required function pattern(s) not found, aborting.";
 		return FALSE;
 	}
-	BOOST_LOG_TRIVIAL(info) << "Found GameLogic_HandleDesync at: 0x"
-		<< std::hex << reinterpret_cast<DWORD>(addrHandleDesync);
 
 	// --- Install Detours hooks ---
-	pOriginalCheckDesync = reinterpret_cast<CheckDesync_t>(addrCheckDesync);
-	pOriginalHandleDesync = reinterpret_cast<HandleDesync_t>(addrHandleDesync);
-
 	DetourTransactionBegin();
 	DetourUpdateThread(GetCurrentThread());
 
-	if (config.logDesyncMismatch)
+	if (addrCheckDesync)
 	{
+		pOriginalCheckDesync = reinterpret_cast<CheckDesync_t>(addrCheckDesync);
 		DetourAttach(&reinterpret_cast<PVOID&>(pOriginalCheckDesync), hookCheckDesync);
-		BOOST_LOG_TRIVIAL(info) << "Hooked GameLogic_CheckDesync for mismatch logging.";
+		BOOST_LOG_TRIVIAL(info) << "Hooked GameLogic_CheckDesync.";
 	}
-
-	if (config.suppressDesyncDialog)
+	if (addrHandleDesync)
 	{
+		pOriginalHandleDesync = reinterpret_cast<HandleDesync_t>(addrHandleDesync);
 		DetourAttach(&reinterpret_cast<PVOID&>(pOriginalHandleDesync), hookHandleDesync);
-		BOOST_LOG_TRIVIAL(info) << "Hooked GameLogic_HandleDesync for dialog suppression.";
+		BOOST_LOG_TRIVIAL(info) << "Hooked GameLogic_HandleDesync.";
+	}
+	if (addrComputeCRC)
+	{
+		pOriginalComputeStateCRC = reinterpret_cast<ComputeStateCRC_t>(addrComputeCRC);
+		DetourAttach(&reinterpret_cast<PVOID&>(pOriginalComputeStateCRC), hookComputeStateCRC);
+		BOOST_LOG_TRIVIAL(info) << "Hooked GameLogic_ComputeStateCRC.";
+	}
+	if (addrXferSnapshot)
+	{
+		pOriginalXferSnapshot = reinterpret_cast<XferSnapshot_t>(addrXferSnapshot);
+		DetourAttach(&reinterpret_cast<PVOID&>(pOriginalXferSnapshot), hookXferSnapshot);
+		BOOST_LOG_TRIVIAL(info) << "Hooked XferCRC_XferSnapshot.";
 	}
 
 	LONG result = DetourTransactionCommit();

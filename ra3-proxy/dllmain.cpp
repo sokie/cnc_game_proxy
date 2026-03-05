@@ -769,7 +769,8 @@ DWORD WINAPI Main(LPVOID lpReserved) {
         }
     }
 
-    if ((config->logDesyncMismatch || config->suppressDesyncDialog) &&
+    if ((config->logDesyncMismatch || config->suppressDesyncDialog ||
+         config->logSubsystemCRC || config->forceCRCMatch) &&
         gameInfo.executableName == L"cnc3game.dat") {
         const PatchDesync* desyncPatch = &PatchDesync::GetInstance();
 
