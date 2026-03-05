@@ -9,6 +9,12 @@
     "patches": {
         "SSL": true
     },
+    "desync": {
+        "logMismatch": false,
+        "suppressDialog": false,
+        "logSubsystemCRC": false,
+        "forceCRCMatch": false
+    },
     "proxy": {
         "enable": true,
         "destinationPort": 18840,
