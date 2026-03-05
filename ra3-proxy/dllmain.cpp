@@ -736,7 +736,9 @@ DWORD WINAPI Main(LPVOID lpReserved) {
             // Strip extension for clean log file prefix
             size_t lastDot = execName.find_last_of(L".");
             std::wstring execStem = lastDot != std::wstring::npos ? execName.substr(0, lastDot) : execName;
-            logPrefix = std::string(execStem.begin(), execStem.end());
+            logPrefix.reserve(execStem.size());
+            for (wchar_t wc : execStem)
+                logPrefix.push_back(static_cast<char>(wc));
         }
     }
 
