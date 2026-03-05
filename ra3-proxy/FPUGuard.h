@@ -12,18 +12,22 @@
 
 #include <float.h>
 
+// MCW_DN may not be defined in older MSVC headers
+#ifndef MCW_DN
+#define MCW_DN 0x03000000
+#endif
+
 class FPUGuard
 {
 public:
 	FPUGuard()
 	{
-		_controlfp_s(&savedCW_, 0, 0);
+		savedCW_ = _controlfp(0, 0);
 	}
 
 	~FPUGuard()
 	{
-		unsigned int dummy;
-		_controlfp_s(&dummy, savedCW_, MCW_PC | MCW_RC | MCW_EM | MCW_IC | MCW_DN);
+		_controlfp(savedCW_, MCW_PC | MCW_RC | MCW_EM | MCW_IC);
 	}
 
 	FPUGuard(const FPUGuard&) = delete;
