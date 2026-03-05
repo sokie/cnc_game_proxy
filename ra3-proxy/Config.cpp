@@ -41,7 +41,6 @@ Config::Config()
 	// Section - Desync
 	logDesyncMismatch = pt.get("desync.logMismatch", false);
 	suppressDesyncDialog = pt.get("desync.suppressDialog", false);
-	logSubsystemCRC = pt.get("desync.logSubsystemCRC", false);
 	forceCRCMatch = pt.get("desync.forceCRCMatch", false);
 	crcInterval = pt.get("desync.crcInterval", 0);
 	disableObjectCRC = pt.get("desync.disableObjectCRC", false);
