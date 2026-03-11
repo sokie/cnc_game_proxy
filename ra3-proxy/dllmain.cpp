@@ -523,6 +523,9 @@ struct hostent* WSAAPI detourGetHostByName(const char* name) {
         host == "cc3xp1.available.gamespy.com" ||
         host == "cc3xp1.master.gamespy.com" ||
         host == "cc3xp1.ms18.gamespy.com" ||
+        host == "cc3xp1am.available.gamespy.com" ||
+        host == "cc3xp1am.master.gamespy.com" ||
+        host == "cc3xp1am.ms12.gamespy.com" ||
         host == "redalert3pc.available.gamespy.com" ||
         host == "redalert3pc.master.gamespy.com" ||
         host == "redalert3pc.ms1.gamespy.com" ||
