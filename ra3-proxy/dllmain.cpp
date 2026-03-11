@@ -16,6 +16,7 @@ found in the LICENSE file in the root directory of this source tree.
 #include "patch/RA3/PatchSSL.hpp"
 #include "patch/RA3/PatchAuthKey.hpp"
 #include "patch/RA3/PatchDesync.hpp"
+#include "patch/RA3/PatchAutomatch.hpp"
 #include "patch/RA3/ProxySSL.h"
 
 #include <map>
@@ -784,6 +785,14 @@ DWORD WINAPI Main(LPVOID lpReserved) {
 
         if (!desyncPatch->Patch()) {
             BOOST_LOG_TRIVIAL(error) << "Failed to install desync hooks.";
+        }
+    }
+
+    if (config->debugAutomatch && gameInfo.executableName == L"cnc3ep1.dat") {
+        const PatchAutomatch* automatchPatch = &PatchAutomatch::GetInstance();
+
+        if (!automatchPatch->Patch()) {
+            BOOST_LOG_TRIVIAL(error) << "Failed to install automatch debug hooks.";
         }
     }
 
