@@ -31,6 +31,16 @@ public:
 	bool patchSSL;
 	bool patchAuthKey;
 
+	/* Desync */
+	bool logDesyncMismatch;
+	bool suppressDesyncDialog;
+	bool forceCRCMatch;
+	int crcInterval;           // 0 = game default, >0 = override CRC check interval (frames)
+	bool disableObjectCRC;     // exclude objects from CRC (NOPs liteCRC override)
+
+	/* Automatch debug */
+	bool debugAutomatch;
+
 	/* Proxy */
 	bool proxy_enable;
 	USHORT proxyListenPort;

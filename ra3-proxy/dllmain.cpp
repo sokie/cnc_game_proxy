@@ -15,6 +15,8 @@ found in the LICENSE file in the root directory of this source tree.
 #include "GameVersion.h"
 #include "patch/RA3/PatchSSL.hpp"
 #include "patch/RA3/PatchAuthKey.hpp"
+#include "patch/RA3/PatchDesync.hpp"
+#include "patch/RA3/PatchAutomatch.hpp"
 #include "patch/RA3/ProxySSL.h"
 
 #include <map>
@@ -78,6 +80,7 @@ HINSTANCE WINAPI detourShellExecuteW(HWND hwnd, LPCWSTR lpOperation, LPCWSTR lpF
 
 std::atomic<bool> useAltPeerChatPort(false);
 int WSAAPI detourConnect(SOCKET s, const sockaddr* name, int namelen) {
+
     sockaddr_in* addr_in = (sockaddr_in*)name;
 
     if (addr_in->sin_family == AF_INET) {
@@ -287,6 +290,7 @@ bool parseMasterValidate(const char* data, size_t len, std::string& validate) {
 
 int WSAAPI detourSend(SOCKET s, const char* buf, int len, int flags) {
 
+
     BOOST_LOG_NAMED_SCOPE("detourSend");
 
     std::string str(buf, len);
@@ -365,6 +369,8 @@ int WSAAPI detourSend(SOCKET s, const char* buf, int len, int flags) {
 }
 
 int WSAAPI detourRecv(SOCKET s, char* buf, int len, int flags) {
+
+
     // CRITICAL: Call the original recv and IMMEDIATELY capture the error code
     // before any other WinSock calls can overwrite it
     int bytes_recv = pRecv(s, buf, len, flags);
@@ -474,6 +480,7 @@ int WSAAPI detourRecv(SOCKET s, char* buf, int len, int flags) {
 }
 
 struct hostent* WSAAPI detourGetHostByName(const char* name) {
+
     const auto& config = Config::GetInstance();
     std::string host(name);
     BOOST_LOG_TRIVIAL(info) << "Requested GetHostByName(): " << host.c_str();
@@ -733,7 +740,9 @@ DWORD WINAPI Main(LPVOID lpReserved) {
             // Strip extension for clean log file prefix
             size_t lastDot = execName.find_last_of(L".");
             std::wstring execStem = lastDot != std::wstring::npos ? execName.substr(0, lastDot) : execName;
-            logPrefix = std::string(execStem.begin(), execStem.end());
+            logPrefix.reserve(execStem.size());
+            for (wchar_t wc : execStem)
+                logPrefix.push_back(static_cast<char>(wc));
         }
     }
 
@@ -753,7 +762,7 @@ DWORD WINAPI Main(LPVOID lpReserved) {
     }
 
     // Identify game version
-    GameVersion::GetInstance();
+    const auto& gameInfo = GameVersion::GetInstance().GetInfo();
 
     if (config->patchSSL) {
         const PatchSSL* sslPatch = &PatchSSL::GetInstance();
@@ -768,6 +777,25 @@ DWORD WINAPI Main(LPVOID lpReserved) {
 
         if (!authKeyPatch->Patch()) {
             BOOST_LOG_TRIVIAL(error) << "Failed to patch AuthKey.";
+        }
+    }
+
+    if ((config->logDesyncMismatch || config->suppressDesyncDialog ||
+         config->forceCRCMatch || config->crcInterval > 0 ||
+         config->disableObjectCRC) &&
+        gameInfo.executableName == L"cnc3game.dat") {
+        const PatchDesync* desyncPatch = &PatchDesync::GetInstance();
+
+        if (!desyncPatch->Patch()) {
+            BOOST_LOG_TRIVIAL(error) << "Failed to install desync hooks.";
+        }
+    }
+
+    if (config->debugAutomatch && gameInfo.executableName == L"cnc3ep1.dat") {
+        const PatchAutomatch* automatchPatch = &PatchAutomatch::GetInstance();
+
+        if (!automatchPatch->Patch()) {
+            BOOST_LOG_TRIVIAL(error) << "Failed to install automatch debug hooks.";
         }
     }
 

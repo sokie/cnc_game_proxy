@@ -38,11 +38,11 @@ std::vector<PatternByte> ParsePattern(const std::string& pattern_str) {
 					parsed_pattern.emplace_back(static_cast<std::byte>(val));
 				}
 			}
-			catch (const std::invalid_argument& ia) {
+			catch (const std::invalid_argument&) {
 				BOOST_LOG_TRIVIAL(warning) << "Invalid byte string '" << byte_str << "'. Treating as wildcard.";
 				parsed_pattern.emplace_back();
 			}
-			catch (const std::out_of_range& oor) {
+			catch (const std::out_of_range&) {
 				BOOST_LOG_TRIVIAL(warning) << "Byte value '" << byte_str << "' is out of range. Treating as wildcard.";
 				parsed_pattern.emplace_back();
 			}
