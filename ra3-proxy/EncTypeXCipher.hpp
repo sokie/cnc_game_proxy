@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include <winsock2.h>
+#include <boost/log/trivial.hpp>
 
 class EncTypeXCipher {
 public:
@@ -15,6 +16,16 @@ public:
 
     // Initialize with game key and validate string from client request
     void init(const std::string& key, const std::string& validate) {
+        // initDecoder() takes `i % key.size()`, so an empty key divides by zero.
+        // game.gameKey is empty by default.
+        if (key.empty()) {
+            BOOST_LOG_TRIVIAL(warning)
+                << "[MASTER] Cannot init cipher: game.gameKey is not set. "
+                   "Decryption logging stays off.";
+            initialized = false;
+            return;
+        }
+
         this->key.assign(key.begin(), key.end());
         this->validate.assign(validate.begin(), validate.end());
         start = 0;

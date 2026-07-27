@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include <winsock2.h>
+#include <boost/log/trivial.hpp>
 
 class PeerchatCipher {
 public:
@@ -19,6 +20,16 @@ public:
 
     // Initialize cipher with challenge and game key
     void init(const std::string& challenge, const std::string& gamekey) {
+        // Without a key there is nothing to derive the table from, and the
+        // modulo below would divide by zero. game.gameKey is empty by default.
+        if (gamekey.empty() || challenge.empty()) {
+            BOOST_LOG_TRIVIAL(warning)
+                << "[PEERCHAT] Cannot init cipher: game.gameKey is not set. "
+                   "Decryption logging stays off.";
+            initialized = false;
+            return;
+        }
+
         this->challenge = challenge;
         pc1 = 0;
         pc2 = 0;

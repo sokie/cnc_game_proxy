@@ -36,8 +36,15 @@ void GameVersion::Identify() {
     if (GetModuleFileNameExW(hProcess, NULL, buffer, sizeof(buffer) / sizeof(TCHAR))) {
         info_.executableName = GetFileName(buffer);
 
+        // Executable names are compared case-insensitively: installs differ on
+        // this (RA3_1.12.game vs ra3_1.12.game) and a mismatch used to leave the
+        // game unidentified.
+        auto nameIs = [this](const wchar_t* expected) {
+            return _wcsicmp(info_.executableName.c_str(), expected) == 0;
+        };
+
         if (GetFileVersion(buffer, info_.major, info_.minor)) {
-            if (info_.executableName == L"ra3_1.12.game" && info_.major == 1 && info_.minor == 12) {
+            if (nameIs(L"ra3_1.12.game") && info_.major == 1 && info_.minor == 12) {
                 info_.release = GetReleaseVersion("1.12");
                 identified_ = true;
 
@@ -53,7 +60,7 @@ void GameVersion::Identify() {
                         break;
                 }
             }
-            else if (info_.executableName == L"ra3_1.13.game" && info_.major == 1 && info_.minor == 13) {
+            else if (nameIs(L"ra3_1.13.game") && info_.major == 1 && info_.minor == 13) {
                 info_.release = GetReleaseVersion("1.13");
                 identified_ = true;
 
@@ -66,11 +73,11 @@ void GameVersion::Identify() {
                         break;
                 }
             }
-            else if (info_.executableName == L"cnc3ep1.dat") {
+            else if (nameIs(L"cnc3ep1.dat")) {
                 identified_ = true;
                 BOOST_LOG_TRIVIAL(info) << "Command & Conquer 3: Kane's Wrath (v" << info_.major << "." << info_.minor << ")";
             }
-            else if (info_.executableName == L"cnc3game.dat") {
+            else if (nameIs(L"cnc3game.dat")) {
                 identified_ = true;
                 BOOST_LOG_TRIVIAL(info) << "Command & Conquer 3: Tiberium Wars (v" << info_.major << "." << info_.minor << ")";
             }

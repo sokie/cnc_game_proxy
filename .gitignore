@@ -50,3 +50,5 @@ vcpkg_installed/
 # build artifacts
 build/
 Release/
+# Packaged test builds
+dist/

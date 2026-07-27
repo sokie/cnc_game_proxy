@@ -7,7 +7,8 @@
         "logLevelFile": 1
     },
     "patches": {
-        "SSL": true
+        "SSL": true,
+        "AuthKey": true
     },
     "proxy": {
         "enable": true,
