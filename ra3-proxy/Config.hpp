@@ -48,6 +48,10 @@ public:
 	/* Gamekey */
 	std::string gameKey;
 
+	/* GSI_DOMAIN_NAME the game's GameSpy SDK was built with. Retail C&C uses
+	   gamespy.com, GeneralsGameCode uses server.cnc-online.net. */
+	std::string gsDomain;
+
 	/* Port peerchat really listens on. 0 keeps the legacy behaviour of trying
 	   6667 first and falling back to 16667. RA3BN only serves 16667. */
 	USHORT peerchatPort;
