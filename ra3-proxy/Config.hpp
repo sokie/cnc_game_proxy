@@ -31,6 +31,14 @@ public:
 	bool patchSSL;
 	bool patchAuthKey;
 
+	/* RA3 Battle.net delegation: load the user's installed RA3BN NativeDll.dll
+	   and let it drive connectivity, instead of our hostname redirection.
+	   Red Alert 3 1.12 only. */
+	bool ra3bnDelegate;
+	std::string ra3bnClientDll;   // explicit path; empty = autodetect
+	std::string ra3bnLogFolder;   // where their DLL writes its log; empty = their client's logs folder
+	INT ra3bnWaitSeconds;         // how long to wait for the game window
+
 	/* Proxy */
 	bool proxy_enable;
 	USHORT proxyListenPort;
@@ -39,6 +47,10 @@ public:
 
 	/* Gamekey */
 	std::string gameKey;
+
+	/* Port peerchat really listens on. 0 keeps the legacy behaviour of trying
+	   6667 first and falling back to 16667. RA3BN only serves 16667. */
+	USHORT peerchatPort;
 
 	/* Hostnames */
 	std::unordered_map<std::string, std::string> hostnames;

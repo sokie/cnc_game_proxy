@@ -38,6 +38,12 @@ Config::Config()
 	patchSSL = pt.get("patches.SSL", true);
 	patchAuthKey = pt.get("patches.AuthKey", true);
 
+	// Section - RA3 Battle.net delegation
+	ra3bnDelegate = pt.get("ra3bn.delegate", false);
+	ra3bnClientDll = pt.get("ra3bn.clientDll", "");
+	ra3bnLogFolder = pt.get("ra3bn.logFolder", "");
+	ra3bnWaitSeconds = pt.get("ra3bn.waitSeconds", 120);
+
 	// Section - Proxy
 	proxy_enable = pt.get("proxy.enable", true);
 	proxyListenPort = pt.get("proxy.listenPort", static_cast<USHORT>(18840));
@@ -46,6 +52,7 @@ Config::Config()
 
 	// Game related settings
 	gameKey = pt.get("game.gameKey", "");
+	peerchatPort = pt.get("game.peerchatPort", static_cast<USHORT>(0));
 
 	// Section - Hostnames
 	const auto hostnamesNode = pt.get_child_optional("hostnames");

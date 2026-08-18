@@ -1,0 +1,33 @@
+{
+    "_comment": "Red Alert 3 -> RA3 Battle.net, delegating to their client. Rename to config.json.",
+
+    "_comment_requires": "Requires the RA3BattleNet client to be installed, and Red Alert 3 1.12. We locate their NativeDll.dll automatically via the registry, load it in place and hand connectivity over to it. Their client then owns hostnames, FESL, the relay mesh, the master proxy, the server browser and Sake; we stay for the logging and diagnostics.",
+
+    "_comment_hostnames": "No hostnames section: their client rewrites them in game memory, so ours would never be consulted.",
+
+    "_comment_wine": "On Wine their installer usually has not run, so autodetection finds nothing. Set clientDll yourself, with doubled backslashes. Z: is the Linux root, so /home/you/x is Z:\\\\home\\\\you\\\\x. Paths inside the prefix and %APPDATA% also work. Copy the whole RA3BattleNet folder, not just the DLL - it loads maps, fonts and UI from contents\\\\data relative to itself. Example: \"clientDll\": \"Z:\\\\home\\\\you\\\\RA3BattleNet\\\\contents\\\\NativeDll.dll\"",
+
+    "debug": {
+        "showConsole": true,
+        "createLog": true,
+        "logDecryption": false,
+        "logLevelConsole": 2,
+        "logLevelFile": 1
+    },
+    "ra3bn": {
+        "delegate": true,
+        "clientDll": "",
+        "logFolder": "",
+        "waitSeconds": 120
+    },
+    "patches": {
+        "SSL": true,
+        "AuthKey": true
+    },
+    "proxy": {
+        "enable": false
+    },
+    "game": {
+        "gameKey": ""
+    }
+}

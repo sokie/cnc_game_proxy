@@ -15,6 +15,7 @@ found in the LICENSE file in the root directory of this source tree.
 #include "GameVersion.h"
 #include "patch/RA3/PatchSSL.hpp"
 #include "patch/RA3/PatchAuthKey.hpp"
+#include "patch/RA3/RA3BNDelegate.hpp"
 #include "patch/RA3/ProxySSL.h"
 
 #include <map>
@@ -91,7 +92,14 @@ int WSAAPI detourConnect(SOCKET s, const sockaddr* name, int namelen) {
     if (addr_in->sin_family == AF_INET) { //IPv4
         int port = ntohs(addr_in->sin_port);
         if (port == PORT_PEERCHAT) {
-            if (useAltPeerChatPort) {
+            const USHORT configuredPort = Config::GetInstance().peerchatPort;
+            if (configuredPort != 0) {
+                // Server told us where peerchat lives, so skip the probe. RA3BN
+                // closes 6667 outright, which would cost a failed connect() here.
+                BOOST_LOG_TRIVIAL(debug) << "Using configured peer chat port " << configuredPort;
+                addr_in->sin_port = htons(configuredPort);
+            }
+            else if (useAltPeerChatPort) {
                 BOOST_LOG_TRIVIAL(info) << "Using alt peer chat port";
                 addr_in->sin_port = htons(PORT_PEERCHAT_ALT);
             }
@@ -331,8 +339,10 @@ int WSAAPI detourSend(SOCKET s, const char* buf, int len, int flags) {
             if (parseMasterValidate(buf, len, validate)) {
                 state.validate = validate;
                 state.decoder.init(sendConfig.gameKey, validate);
-                state.cipherReady = true;
-                BOOST_LOG_TRIVIAL(debug) << "[MASTER] Captured validate: " << validate;
+                state.cipherReady = state.decoder.isInitialized();
+                if (state.cipherReady) {
+                    BOOST_LOG_TRIVIAL(debug) << "[MASTER] Captured validate: " << validate;
+                }
             }
         }
     } else if (!isProxyTraffic) {
@@ -424,11 +434,14 @@ int WSAAPI detourRecv(SOCKET s, char* buf, int len, int flags) {
                             const std::string& gameKey = recvConfig.gameKey;
                             state.sendCipher.init(clientChallenge, gameKey);
                             state.recvCipher.init(serverChallenge, gameKey);
-                            state.encryptionEnabled = true;
+                            state.encryptionEnabled = state.sendCipher.isInitialized() &&
+                                                      state.recvCipher.isInitialized();
 
-                            BOOST_LOG_TRIVIAL(debug) << "[PEERCHAT] Encryption enabled!";
-                            BOOST_LOG_TRIVIAL(debug) << "[PEERCHAT] Send challenge: " << clientChallenge;
-                            BOOST_LOG_TRIVIAL(debug) << "[PEERCHAT] Recv challenge: " << serverChallenge;
+                            if (state.encryptionEnabled) {
+                                BOOST_LOG_TRIVIAL(debug) << "[PEERCHAT] Encryption enabled!";
+                                BOOST_LOG_TRIVIAL(debug) << "[PEERCHAT] Send challenge: " << clientChallenge;
+                                BOOST_LOG_TRIVIAL(debug) << "[PEERCHAT] Recv challenge: " << serverChallenge;
+                            }
                         }
                     }
                 }
@@ -502,6 +515,18 @@ struct hostent* WSAAPI detourGetHostByName(const char* name) {
     {
         host = config.getHostname("peerchat");
     }
+    // GameSpy splits the server browser across three roles - master (query),
+    // available (reachability check) and ms<N> (list retrieval). Servers are free
+    // to put them on separate hosts, so each gets its own key, falling back to
+    // "master" for the common case where one host serves all three.
+    else if (host == "redalert3pc.available.gamespy.com")
+    {
+        host = config.getHostname("available", config.getHostname("master"));
+    }
+    else if (host == "redalert3pc.ms1.gamespy.com")
+    {
+        host = config.getHostname("ms1", config.getHostname("master"));
+    }
     else if (host == "lotrbme.available.gamespy.com" ||
         host == "lotrbme.master.gamespy.com" ||
         host == "lotrbme.ms13.gamespy.com" ||
@@ -519,18 +544,24 @@ struct hostent* WSAAPI detourGetHostByName(const char* name) {
         host == "cc3xp1am.available.gamespy.com" ||
         host == "cc3xp1am.master.gamespy.com" ||
         host == "cc3xp1am.ms12.gamespy.com" ||
-        host == "redalert3pc.available.gamespy.com" ||
         host == "redalert3pc.master.gamespy.com" ||
-        host == "redalert3pc.ms1.gamespy.com" ||
         host == "master.gamespy.com")
     {
         host = config.getHostname("master");
     }
-    else if (host == "redalert3pc.natneg1.gamespy.com" ||
-        host == "redalert3pc.natneg2.gamespy.com" ||
-        host == "redalert3pc.natneg3.gamespy.com")
+    // natneg1/2/3 are meant to be independent endpoints the game retries across,
+    // so keep them separable instead of collapsing all three onto one host.
+    else if (host == "redalert3pc.natneg1.gamespy.com")
     {
         host = config.getHostname("natneg");
+    }
+    else if (host == "redalert3pc.natneg2.gamespy.com")
+    {
+        host = config.getHostname("natneg2", config.getHostname("natneg"));
+    }
+    else if (host == "redalert3pc.natneg3.gamespy.com")
+    {
+        host = config.getHostname("natneg3", config.getHostname("natneg"));
     }
     else if (host == "lotrbme.gamestats.gamespy.com" ||
         host == "lotrbme2r.gamestats.gamespy.com" ||
@@ -771,7 +802,23 @@ DWORD WINAPI Main(LPVOID lpReserved) {
         }
     }
 
-    if (config->proxy_enable) {
+    bool delegating = false;
+    if (config->ra3bnDelegate) {
+        // Their client owns connectivity here: it rewrites the hostnames in game
+        // memory and applies its own FESL patches, and connects directly.
+        BOOST_LOG_TRIVIAL(info) << "RA3 Battle.net delegation enabled.";
+
+        delegating = RA3BNDelegate::GetInstance().Start();
+
+        if (delegating && config->proxy_enable) {
+            BOOST_LOG_TRIVIAL(warning) << "Ignoring proxy.enable: the RA3BN client connects "
+                                          "directly, so the local proxy would serve nothing.";
+        }
+    }
+
+    // Not while delegating: the proxy would idle on its port, and treating that
+    // port as ours suppresses logging of the client's own FESL traffic.
+    if (config->proxy_enable && !delegating) {
         proxyThread = std::thread(&InitProxy);
     }
 

@@ -15,6 +15,7 @@ A Windows DLL library that enables **Red Alert 3, Tiberium Wars, and Kane's Wrat
 | Server | Description |
 |--------|-------------|
 | [CnC-Online](https://cnc-online.net/) | Community-run servers for C&C games |
+| [RA3 Battle.net](https://ra3battle.net/) | Community-run RA3 server (Red Alert 3 1.12 only) |
 | [Kirov Server Emulator](https://github.com/sokie/kirov-server-emulator) | Self-hosted server emulator for RA3 |
 
 ## Installation
@@ -62,6 +63,96 @@ Copy `config.json.example` to `config.json` and modify as needed.
 }
 ```
 
+### Config for RA3 Battle.net
+
+Red Alert 3 **1.12 only**.
+
+Copy `config.ra3bn.json.example` to `config.json`. Requires the
+[RA3BattleNet client](https://www.ra3battle.net/) to be installed.
+
+```json
+{
+    "ra3bn": { "delegate": true },
+    "proxy": { "enable": false }
+}
+```
+
+RA3BN moves most GameSpy services onto its own transports, which hostname redirection
+cannot reach. So we load the RA3BattleNet client's `NativeDll.dll` and delegate
+connectivity to it, keeping our own logging and diagnostics.
+
+It is loaded from its own installed path and never copied, since it resolves game
+assets relative to that location. We find it via the registry, falling back to
+`%APPDATA%\RA3BattleNet\contents\NativeDll.dll`. Set `ra3bn.clientDll` to override.
+
+**You must launch 1.12.** If your install also has `RA3_1.13.game`, `RA3.exe` will
+start 1.13 by default and we will refuse to load their client (it only supports 1.12,
+and would terminate the game on any other build). Launch with:
+
+```
+RA3.exe -runver 1.12
+```
+
+Place `winmm.dll` and the boost DLLs in `Red Alert 3\Data\`, next to the game
+executable, and `config.json` in `Red Alert 3\`: the game's working directory is the
+folder above `Data`.
+
+Running their launcher at the same time is safe: their entry point takes a
+per-process mutex, so whichever arrives second stands down instead of double-patching.
+
+| Key | Default | Description |
+|---|---|---|
+| `ra3bn.delegate` | false | Load the installed RA3BattleNet client |
+| `ra3bn.clientDll` | "" | Full path to their `NativeDll.dll`. Empty autodetects |
+| `ra3bn.logFolder` | "" | Where their DLL writes its log. Empty uses their client's `logs` folder |
+| `ra3bn.waitSeconds` | 120 | How long to wait for the game window before giving up |
+
+If the game is not RA3 1.12, or their client is not installed, we log the reason and
+carry on without it: their address table would otherwise terminate the game on an
+unsupported build.
+
+#### Wine / Proton / Linux
+
+This works where the RA3BattleNet launcher does not, because it skips the part that
+breaks: their launcher is .NET plus WebView2 and injects with EasyHook. `NativeDll.dll`
+needs none of that, importing only system libraries, and we load it in-process from our
+`winmm.dll` override.
+
+**Their installer usually has not run**, so autodetection (registry, then `%APPDATA%`)
+finds nothing. Point `ra3bn.clientDll` at the DLL yourself. Copy the whole
+`RA3BattleNet` folder from a Windows install, not just the DLL, since it loads maps,
+fonts and UI from `contents\data\` relative to itself.
+
+```json
+{
+    "ra3bn": {
+        "delegate": true,
+        "clientDll": "Z:\\home\\you\\RA3BattleNet\\contents\\NativeDll.dll"
+    },
+    "proxy": { "enable": false }
+}
+```
+
+Path notes:
+
+- JSON needs **doubled backslashes**.
+- `Z:` is Wine's mapping of the Linux root, so `/home/you/x` becomes `Z:\\home\\you\\x`.
+- A path inside the prefix works too:
+  `"C:\\users\\you\\AppData\\Roaming\\RA3BattleNet\\contents\\NativeDll.dll"`.
+- `%APPDATA%` and other environment variables are expanded, so
+  `"%APPDATA%\\RA3BattleNet\\contents\\NativeDll.dll"` is valid.
+- If you did run their installer under Wine, leave `clientDll` empty: the registry
+  lookup will find it.
+
+Launch the game with `-runver 1.12` as above. On failure our log lists every path that
+was tried, so you can see what to set.
+
+Untested by us on Wine: the most likely snag is their HTTPS API, since they read the
+Windows root certificate store (`CertOpenSystemStoreW`) and a Wine prefix may have no
+CA certificates. If login works but stats, lobbies or maps do not, check their log at
+`<client folder>\logs\NativeDll.dll.txt` for TLS errors, and install CA certs into the
+prefix (`winetricks cacert` or copy the host bundle).
+
 ### Config for Kirov Server Emulator
 
 ```json
@@ -106,11 +197,22 @@ Then you need to add that to your config file as so `"login": "my_cool_pc",` and
 | debug | logLevelConsole | 2 | Console log level (0-5) |
 | debug | logLevelFile | 1 | File log level (0-5) |
 | patches | SSL | true | Enable SSL certificate patching |
+| patches | AuthKey | true | Bypass the GameSpy auth certificate check |
+| ra3bn | delegate | false | RA3 Battle.net: load the installed RA3BattleNet client (RA3 1.12 only) |
+| ra3bn | clientDll | "" | Full path to their `NativeDll.dll`. Empty autodetects |
+| ra3bn | logFolder | "" | Where their DLL writes its log. Empty uses their client's `logs` folder |
+| ra3bn | waitSeconds | 120 | How long to wait for the game window before giving up |
 | proxy | enable | true | Enable the local SSL proxy (listens on port 18840) |
 | proxy | destinationPort | 18840 | Port to forward traffic to on `hostnames.login` |
 | proxy | listenPort | 18840 | Port that our proxy listens on. `18840` for RA3, `18760` for KW, `18310` for TW |
 | proxy | secure | false | Use SSL for proxy forwarding connection |
-| game | gameKey | "" | GameSpy encryption key |
+| game | gameKey | "" | GameSpy encryption key, only needed for `logDecryption` |
+| game | peerchatPort | 0 | Port peerchat listens on. `0` tries 6667 then falls back to 16667 |
+
+Hostname keys: `host`, `login`, `gpcm`, `peerchat`, `master`, `natneg`, `stats`, `sake`,
+`server`, `register`, `website`, `tos`. Servers that split the GameSpy browser roles
+across hosts can also set `available` and `ms1` (both default to `master`) and
+`natneg2` / `natneg3` (both default to `natneg`).
 
 
 Log levels: `0=trace, 1=debug, 2=info, 3=warning, 4=error, 5=fatal`

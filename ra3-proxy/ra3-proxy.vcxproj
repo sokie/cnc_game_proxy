@@ -107,6 +107,7 @@
     <ClInclude Include="GameVersion.h" />
     <ClInclude Include="patch\RA3\PatchAuthKey.hpp" />
     <ClInclude Include="patch\RA3\PatchSSL.hpp" />
+    <ClInclude Include="patch\RA3\RA3BNDelegate.hpp" />
     <ClInclude Include="patch\RA3\ProxyCert.hpp" />
     <ClInclude Include="patch\RA3\ProxySSL.h" />
     <ClInclude Include="PeerchatCipher.hpp" />
@@ -119,6 +120,7 @@
     <ClCompile Include="GameVersion.cpp" />
     <ClCompile Include="patch\RA3\PatchAuthKey.cpp" />
     <ClCompile Include="patch\RA3\PatchSSL.cpp" />
+    <ClCompile Include="patch\RA3\RA3BNDelegate.cpp" />
     <ClCompile Include="patch\RA3\ProxySSL.cpp" />
     <ClCompile Include="util.cpp" />
   </ItemGroup>
