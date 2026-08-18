@@ -52,6 +52,7 @@ Config::Config()
 
 	// Game related settings
 	gameKey = pt.get("game.gameKey", "");
+	gsDomain = pt.get<std::string>("game.gsDomain", "gamespy.com");
 	peerchatPort = pt.get("game.peerchatPort", static_cast<USHORT>(0));
 
 	// Section - Hostnames

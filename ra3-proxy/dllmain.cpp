@@ -18,6 +18,8 @@ found in the LICENSE file in the root directory of this source tree.
 #include "patch/RA3/RA3BNDelegate.hpp"
 #include "patch/RA3/ProxySSL.h"
 
+#include <algorithm>
+#include <cctype>
 #include <map>
 #include <mutex>
 #include <sstream>
@@ -486,9 +488,89 @@ int WSAAPI detourRecv(SOCKET s, char* buf, int len, int flags) {
     return bytes_recv;  // ErrorRestorer destructor will restore the error
 }
 
+// GameSpy hostnames are "[<gamename>.]<service>.<GSI_DOMAIN_NAME>". The literals above
+// only cover the retail gamespy.com builds; GeneralsGameCode compiles the SDK with
+// GAMESPY_SERVER_NAME=server.cnc-online.net, so classify by service label instead of
+// duplicating the table per domain.
+static bool stripDomainSuffix(const std::string& host, const std::string& domain, std::string& remainder) {
+    // Requires a label before the domain, so the domain itself does not match.
+    if (domain.empty() || host.size() <= domain.size() + 1) return false;
+    if (host.compare(host.size() - domain.size(), domain.size(), domain) != 0) return false;
+    if (host[host.size() - domain.size() - 1] != '.') return false;
+
+    remainder = host.substr(0, host.size() - domain.size() - 1);
+    return true;
+}
+
+// Returns "" if the name is not a GameSpy service host.
+static std::string redirectGameSpyService(const std::string& name) {
+    const auto& config = Config::GetInstance();
+
+    std::string host(name);
+    std::transform(host.begin(), host.end(), host.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    std::string remainder;
+    if (!stripDomainSuffix(host, config.gsDomain, remainder) &&
+        !stripDomainSuffix(host, "gamespy.com", remainder))
+        return "";
+
+    // Service is the rightmost label; "pubsvs" covers auth.pubsvs and comp.pubsvs.
+    std::string label = remainder;
+    const auto dot = label.find_last_of('.');
+    if (dot != std::string::npos) label = label.substr(dot + 1);
+
+    if (label == "gpcm")      return config.getHostname("gpcm");
+    if (label == "gpsp")      return config.getHostname("gpsp", config.getHostname("gpcm"));
+    if (label == "peerchat")  return config.getHostname("peerchat");
+    if (label == "gamestats") return config.getHostname("stats");
+    if (label == "master")    return config.getHostname("master");
+    if (label == "available") return config.getHostname("available", config.getHostname("master"));
+    if (label == "sake" || label == "pubsvs") return config.getHostname("sake");
+    if (label == "motd")      return config.getHostname("host");
+
+    // natneg1/2/3 are independent endpoints the game retries across.
+    if (label == "natneg" || label == "natneg1") return config.getHostname("natneg");
+    if (label == "natneg2")   return config.getHostname("natneg2", config.getHostname("natneg"));
+    if (label == "natneg3")   return config.getHostname("natneg3", config.getHostname("natneg"));
+
+    // ms<N> is the server list host, numbered per title: ms6 ZH, ms19 Generals, ms1 RA3.
+    if (label.size() > 2 && label.compare(0, 2, "ms") == 0 &&
+        label.find_first_not_of("0123456789", 2) == std::string::npos)
+        return config.getHostname("ms1", config.getHostname("master"));
+
+    return "";
+}
+
+// Generals/Zero Hour hands gethostbyname a pointer into a stack frame its caller has
+// already left: both async DNS sites declare the name as a local and pass it to
+// CreateThread (MainMenuUtils.cpp:776 and :831). Both want servserv.generals.ea.com.
+static bool looksLikeHostname(const char* name) {
+    if (name == nullptr || *name == '\0') return false;
+
+    for (size_t i = 0; name[i] != '\0'; ++i) {
+        if (i >= 253) return false;
+        const unsigned char c = static_cast<unsigned char>(name[i]);
+        const bool legal = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                           (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_';
+        if (!legal) return false;
+    }
+    return true;
+}
+
 struct hostent* WSAAPI detourGetHostByName(const char* name) {
     const auto& config = Config::GetInstance();
-    std::string host(name);
+
+    std::string host;
+    if (looksLikeHostname(name)) {
+        host = name;
+    }
+    else {
+        host = "servserv.generals.ea.com";
+        BOOST_LOG_TRIVIAL(warning) << "gethostbyname(): argument is not a hostname "
+            "(dangling stack pointer), substituting " << host;
+    }
+
     BOOST_LOG_TRIVIAL(info) << "Requested GetHostByName(): " << host.c_str();
 
     if (host == "servserv.generals.ea.com" ||
@@ -590,6 +672,20 @@ struct hostent* WSAAPI detourGetHostByName(const char* name) {
         host == "ingamead.gamespy.com")
     {
         host = config.getHostname("server");
+    }
+    else
+    {
+        // Fall back to service-label classification for other GSI_DOMAIN_NAME builds.
+        const std::string mapped = redirectGameSpyService(host);
+        if (mapped.empty())
+        {
+            BOOST_LOG_TRIVIAL(info) << "GetHostByName(): no rule for " << host.c_str()
+                << " - passing it through to real DNS";
+        }
+        else
+        {
+            host = mapped;
+        }
     }
 
 

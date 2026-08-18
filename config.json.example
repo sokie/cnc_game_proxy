@@ -16,7 +16,8 @@
         "secure": false
     },
     "game": {
-        "gameKey": ""
+        "gameKey": "",
+        "gsDomain": "gamespy.com"
     },
     "hostnames": {
         "host": "http.server.cnc-online.net",
